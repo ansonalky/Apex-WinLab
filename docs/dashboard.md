@@ -16,7 +16,7 @@ Prediction panels. Each says **Not available** when its artifact is missing or i
 
 | Panel | Artifact | Meaning |
 | --- | --- | --- |
-| **Held-out win probability** (primary) | `DATA/exports/heldout-session-split-v1/` | Per-checkpoint predictions for the 6 test games of the frozen session split. The model was fit on other sessions. |
+| **Held-out win probability** (primary) | `DATA/exports/heldout-session-split-v2/` | Per-checkpoint predictions for the 6 test games of the frozen session split. The model was fit on other sessions. |
 | **Final model: fitted on these games** | `DATA/models/model.json` | A forward pass of the model fit on all 51 games. In-sample; not evidence. |
 | **Held-out evaluation: all test games** | `DATA/models/report.json` | Aggregate test metrics. Contention uniform is listed as the primary baseline. |
 
@@ -34,7 +34,18 @@ Predictions are joined on `(game_id, t)` and `teamId`. Each bundle checkpoint mu
 
 The demo opens on the first held-out test game.
 
-Coordinate units are unverified. The plot is XY only. `z` is omitted. No map image is used.
+The plot is XY only; `z` is omitted. On a map version with a cached 2048 image, positions use the Overstat `mapCord` transform on that image and the current ring is drawn with the outside shaded (see `docs/map-rendering.md`). Any other map shows "Map background unavailable" and nothing is drawn on another map's image. The ring line names the slider time it is drawn at; prediction panels name their own, older checkpoint time.
+
+## Data backends
+
+`--backend tiger` (or `auto` with imported matches) reads matches, squads, player frames, both prediction kinds, and the evaluation report from Tiger Data (`docs/tiger-data.md`). Not every component is database-backed:
+
+| Component | Source under every backend |
+| --- | --- |
+| Map config and image | `map_config.py` and `static/maps/*.webp` |
+| Current ring (`/api/matches/<id>/ring`) | The local replay payload at the manifest's `download_path`, read by `map_config.load_rings` (`DATA/collection/manifest.json` is required) |
+
+So the Tiger-backed dashboard still needs the local data directory for the ring.
 
 Quality on the selector is the manifest's unrounded per-game score. It is not a model feature.
 

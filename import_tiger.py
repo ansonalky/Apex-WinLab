@@ -150,6 +150,12 @@ class Source:
 
 
 def import_game(connection, source: Source, report: tuple | None, frames_only: bool = False) -> dict:
+    from psycopg.pq import TransactionStatus
+
+    # Inside an open transaction, transaction() is only a savepoint, and the
+    # import is lost when the connection closes. Refuse instead.
+    if connection.info.transaction_status != TransactionStatus.IDLE:
+        raise RuntimeError("import_game needs an idle connection; end the open transaction first")
     game_id = source.game_id
     replaced, kept = [], []
     with connection.transaction():
@@ -320,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
             source = Source(args.data_dir, game_id, store)
             result = import_game(connection, source, report_row, args.frames_only)
             check = verify_game(connection, source)
+            connection.commit()  # end verify's read transaction so the next import commits on its own
             print(f"game {game_id}: replaced {result['replaced_kinds'] or 'none'}, kept {result['kept_kinds'] or 'none'}")
             _print_counts("db", check["counts"])
             print(
@@ -330,8 +337,10 @@ def main(argv: list[str] | None = None) -> int:
                 before = check["counts"]
                 import_game(connection, source, report_row)
                 again = db_counts(connection, game_id)
+                connection.commit()
                 import_game(connection, source, None, frames_only=True)
                 frames_only = db_counts(connection, game_id)
+                connection.commit()
                 _print_counts("after reimport", again)
                 _print_counts("after frames-only reimport", frames_only)
                 if again != before or frames_only != before:

@@ -79,8 +79,13 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, status=None):
+        from types import SimpleNamespace
+
+        from psycopg.pq import TransactionStatus
+
         self.log = []
+        self.info = SimpleNamespace(transaction_status=status or TransactionStatus.IDLE)
 
     @contextmanager
     def transaction(self):
@@ -117,6 +122,14 @@ class ReimportTest(unittest.TestCase):
         self.assertEqual(self._deletes(connection.log), [])
         self.assertFalse(any(sql.startswith("INSERT INTO evaluation_reports") for sql, _ in connection.log))
         self.assertFalse(any(sql.startswith("DELETE FROM evaluation_reports") for sql, _ in connection.log))
+
+    def test_open_transaction_is_refused_not_savepointed(self):
+        from psycopg.pq import TransactionStatus
+
+        connection = FakeConnection(TransactionStatus.INTRANS)
+        with self.assertRaises(RuntimeError):
+            import_tiger.import_game(connection, FakeSource([], [("row",)]), report=None)
+        self.assertEqual(connection.log, [])
 
     def test_redact_hides_connection_details(self):
         dsn = "postgres://user:secret@example.com:5432/db"

@@ -6,16 +6,30 @@ Ingestion is `tiger_schema.sql`, `tiger_rows.py`, and `import_tiger.py`. The das
 
 ## Status (2026-11-14)
 
-**Tiger Data has not been reached.** The only `DATABASE_URL` on this machine, in `~/Apex-WinLab/.env`, has a username but no password. `SELECT 1` fails with `fe_sendauth: no password supplied`. No `.env` exists in this worktree.
+**Imported into Tiger Data** (TimescaleDB 2.32.0). `player_frames` is a hypertable on `ts` with 1-day chunks.
 
-**The SQL was verified on a local stand-in:** embedded PostgreSQL via `pgserver`, without TimescaleDB, so the extension and `create_hypertable` lines were skipped. Games 123349 (train) and 123633 (held-out test):
-- Database counts equal the local source.
-- Sampled player rows match field by field.
-- `ts − t` equals the replay's `match_start` on every row.
-- Full, frames-only, and missing-artifact re-imports leave every count unchanged.
-- The database-backed dashboard store returns the same frames, checkpoints, and predictions as the file store.
+| Table | Rows |
+| --- | --- |
+| `matches` | 51 (test 6, train 36, validation 9) |
+| `squads` | 936 |
+| `player_frames` | 3,223,508 |
+| `squad_estimates` | 41,670: `final_model_fitted` 37,544 (51 games), `held_out` 4,126 (6 games) |
+| `evaluation_reports` | 1 |
 
-This is not a Tiger verification.
+Checks, read back from a new connection:
+- `--check-reimport` on 123349 leaves every count unchanged.
+- No duplicate `(ts, game_id, player_id)` rows.
+- Sampled frames of 123349 (train) and 123633 (held-out) equal the file store.
+- With `--backend tiger`, the dashboard API matches the file store across 320 responses over all 51 games. Squads, positions, health, checkpoints, eligibility, every model and baseline probability, per-game held-out metrics, and session counts all match. Differences remaining:
+  - wording of limitation and reason text;
+  - calibration status, which is not stored;
+  - fields the page does not read: `most_players`, `uniform`, `teams_alive`, bundle metadata, and `converged`.
+
+Per-game held-out metrics are not stored. `TigerStore` recomputes them from stored probabilities and `matches.winner_team_id` with `train_model.score`, and they equal the export bundle's values.
+
+An earlier importer bug committed only the first game of an `--all` run. Verification left a read transaction open, so each later import ran as a savepoint and was rolled back when the connection closed. `main` now ends that transaction after each check, and `import_game` refuses to run inside an open transaction.
+
+Map and ring are **not** in the database. Under every backend they come from `map_config.py`, `static/maps/`, and the local replay payloads (see `docs/dashboard.md`).
 
 ## Time
 

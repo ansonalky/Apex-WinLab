@@ -20,6 +20,15 @@ from dashboard_data import (
     checkpoint_at,
     constrained_metrics,
 )
+from train_model import score
+
+# Per-game metrics, recomputed from stored rows the way export_heldout does:
+# the mean of train_model.score over the game's checkpoints.
+GAME_METRIC_SOURCES = {
+    "model": "model_unconstrained",
+    "model_masked_diagnostic": "model",
+    "uniform_contention": "uniform_contention",
+}
 
 
 def _iso(value) -> str | None:
@@ -102,6 +111,32 @@ class TigerStore:
             point["baseline"] = "uniform_contention" if point["elimination_verified"] else "uniform_lobby_fallback"
         return ordered, version
 
+    def _session_counts(self) -> dict:
+        sessions: dict = {}
+        for match in self.matches():
+            sessions.setdefault(match.get("split"), set()).add(match.get("session_id"))
+        return {split: len(ids) for split, ids in sessions.items()}
+
+    @staticmethod
+    def _game_metrics(points: list[dict], winner) -> dict | None:
+        scored = []
+        for point in points:
+            teams = [str(squad["teamId"]) for squad in point["squads"]]
+            if winner is None or str(winner) not in teams:
+                return None
+            label = teams.index(str(winner))
+            scored.append({
+                method: score([squad[field] for squad in point["squads"]], label)
+                for method, field in GAME_METRIC_SOURCES.items()
+            })
+        if not scored:
+            return None
+        return {
+            method: {metric: sum(item[method][metric] for item in scored) / len(scored)
+                     for metric in ("log_loss", "brier", "top1")}
+            for method in GAME_METRIC_SOURCES
+        }
+
     # --- views -----------------------------------------------------------------
 
     def heldout(self, game_id: int) -> dict:
@@ -126,8 +161,13 @@ class TigerStore:
                     "split": match.get("evaluation_split"),
                     "source": version.get("source"),
                     "code_commit": version.get("code_commit"),
-                    "evaluation_model": {"fit_on": version.get("fit_on"), "l2": version.get("l2")},
-                    "game_metrics": None,
+                    "evaluation_model": {
+                        "fit_on": version.get("fit_on"),
+                        "l2": version.get("l2"),
+                        "train_sessions": self._session_counts().get("train", 0),
+                        "validation_sessions": self._session_counts().get("validation", 0),
+                    },
+                    "game_metrics": self._game_metrics(points, match.get("winner_team_id")),
                     "baseline": "uniform_contention",
                     "points": points,
                     "limitation": (
