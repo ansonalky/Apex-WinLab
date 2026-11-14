@@ -6,7 +6,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from collection import decide, game_quality, mark_duplicates, quality_reason, session_quality
+from collection import (
+    decide,
+    game_quality,
+    mark_duplicates,
+    quality_reason,
+    resolve_winner,
+    session_quality,
+)
+from overstat_patch import export_players
 from collect_matches import fetch_telemetry
 
 
@@ -45,6 +53,67 @@ class DedupeTest(unittest.TestCase):
         self.assertNotEqual(rows[0].get("reason"), "duplicate")
         self.assertEqual(rows[1]["reason"], "duplicate")
         self.assertIn("previously game 1", rows[1]["inconsistent_mapping"])
+
+
+class WinnerLabelTest(unittest.TestCase):
+    def _state(self):
+        return {
+            "teamsAlive": 1,
+            "players": {
+                "a": {"name": "A", "teamId": 13, "teamName": "Bellevue University", "teamPlacement": 1, "status": "dead"},
+                "b": {"name": "B", "teamId": 4, "teamName": "Other", "teamPlacement": 2, "status": "eliminated"},
+            },
+        }
+
+    def _board(self, team_id=13, name="Bellevue University"):
+        return {
+            "id": 123536,
+            "teams": [
+                {"teamId": 9, "name": "Not first", "overall_stats": {"teamPlacement": 2}},
+                {
+                    "teamId": team_id,
+                    "name": name,
+                    "overall_stats": {"teamPlacement": 1, "kills": 8, "damageDealt": 900},
+                    "player_stats": [{"name": "A"}],
+                },
+            ],
+        }
+
+    def test_unique_first_place_must_match_the_replay_squad(self):
+        winner = resolve_winner(self._state(), self._board())
+        self.assertEqual(winner["teamId"], 13)
+        self.assertEqual(winner["teamName"], "Bellevue University")
+        self.assertIn("replay.player.teamPlacement", winner["label_source"])
+        self.assertIn("teamPlacement", winner["label_source"])
+        self.assertNotIn("kills", winner)
+        self.assertNotIn("damageDealt", winner)
+
+    def test_name_or_extra_first_place_keeps_outcome_unknown(self):
+        self.assertIsNone(resolve_winner(self._state(), self._board(name="Wrong Name")))
+        board = self._board()
+        board["teams"].append(
+            {"teamId": 3, "name": "Also first", "overall_stats": {"teamPlacement": 1}}
+        )
+        self.assertIsNone(resolve_winner(self._state(), board))
+
+    def test_standings_alone_do_not_label_a_missing_replay_squad(self):
+        state = {
+            "teamsAlive": 1,
+            "players": {
+                "a": {"name": "A", "teamId": 13, "teamName": "Bellevue University", "status": "dead"},
+            },
+        }
+        self.assertIsNone(resolve_winner(state, self._board()))
+
+    def test_player_rows_do_not_carry_final_placement(self):
+        state = {"players": self._state()["players"]}
+        observed = {
+            "players": {
+                "a": {"name": 0, "teamId": 0, "teamName": 0, "teamPlacement": 0, "status": 0},
+            }
+        }
+        rows = export_players(state, observed, 0)
+        self.assertNotIn("teamPlacement", rows[0])
 
 
 class ResumeTest(unittest.TestCase):
