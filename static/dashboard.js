@@ -188,13 +188,17 @@ function predictionPanel(view, selection, label) {
     return `<p class="unavailable">Not available</p><p>${esc((view && (view.reason || view.limitation)) || "")}</p>`;
   }
   if (!selection) {
-    return `${label}<p class="unavailable">No checkpoint yet at this time.</p>`;
+    return `${label}<p class="unavailable">No prediction yet at this slider time.</p>`;
   }
   const point = view.points[selection.index];
   const team = selectedTeam();
   const age = selection.age_s;
-  const when = `Prediction at ${mmss(point.elapsed)} (replay t ${point.t}${point.replay_time_utc ? `, ${esc(point.replay_time_utc)}` : ""}).` +
-    (age > 0 ? ` Slider is ${age}s later; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : " Slider is on this checkpoint.");
+  const when = `Prediction time ${mmss(point.elapsed)} (replay t ${point.t}${point.replay_time_utc ? `, ${esc(point.replay_time_utc)}` : ""}).` +
+    (age > 0 ? ` Slider time is ${mmss(point.elapsed + age)}, ${age}s later; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : " Slider is on this checkpoint.");
+  const asOf = `Probabilities and eliminations are as of the prediction time ${mmss(point.elapsed)}; the map and roster show the slider time.`;
+  const eligibilityLine = point.eligibility === "unverified"
+    ? `<p class="unavailable">Eligibility unverified at this checkpoint${(point.eligibility_reasons || []).length ? ` (${esc(point.eligibility_reasons.join(", "))})` : ""}: no squad is excluded and probabilities are unconstrained.</p>`
+    : `<p class="when">Eligibility verified: squads eliminated by ${mmss(point.elapsed)} have probability 0; the rest are renormalized.</p>`;
   const baselineName = point.baseline === "uniform_lobby_fallback" || point.elimination_verified === false
     ? "lobby uniform (elimination unverified)" : "contention uniform";
   const rows = [...point.squads]
@@ -210,8 +214,10 @@ function predictionPanel(view, selection, label) {
   }).join("");
   return `${label}
     <p class="when">${when}</p>
+    <p class="when">${asOf}</p>
+    ${eligibilityLine}
     <p class="when">${point.in_contention} squads in contention. Baseline: ${baselineName}.</p>
-    <table class="probs"><thead><tr><th>Squad</th><th class="num">Model</th><th class="num">Baseline</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="probs"><thead><tr><th>Squad</th><th class="num">Model (constrained)</th><th class="num">Baseline</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="history"><strong>Selected squad, checkpoints up to now</strong>${history || "<div>No prediction for this squad.</div>"}</div>`;
 }
 
@@ -239,13 +245,14 @@ function renderEvaluation(evaluation) {
     return;
   }
   const metrics = evaluation.metrics || {};
-  const order = ["model", "uniform_contention", "most_players", "uniform", "model_masked_diagnostic"];
+  const order = ["model_constrained", "model", "uniform_contention", "most_players", "uniform"];
   const names = {
-    model: "Model",
+    model: "Model, raw (before eligibility rule)",
+    model_constrained: "Model, eligibility-constrained",
     uniform_contention: "Contention uniform (primary baseline)",
     most_players: "Most standing players",
     uniform: "Lobby uniform",
-    model_masked_diagnostic: "Model, eliminated masked (diagnostic)",
+
   };
   const methods = [...order.filter((m) => m in metrics), ...Object.keys(metrics).filter((m) => !order.includes(m))];
   const lines = methods.map((method) => {

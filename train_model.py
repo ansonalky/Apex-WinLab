@@ -239,8 +239,19 @@ def contention_baseline(group: dict) -> list[float]:
     return [1.0 / sum(alive) if flag else 0.0 for flag in alive]
 
 
+def eligibility(group: dict) -> str:
+    """``verified``: eliminations at or before this checkpoint are confirmed and
+    applied. ``unverified``: the evidence is inconsistent, so no squad is
+    excluded and probabilities stay unconstrained."""
+    return "verified" if group.get("elimination_verified") else "unverified"
+
+
 def masked(probs: list[float], group: dict) -> list[float]:
-    """Model probabilities renormalized over squads in contention (diagnostic)."""
+    """Eligibility-constrained probabilities.
+
+    Squads with a verified elimination at or before the checkpoint get exactly
+    0; the rest are renormalized. Unverified groups are returned unchanged.
+    """
     alive = contending(group)
     kept = [p if flag else 0.0 for p, flag in zip(probs, alive)]
     total = sum(kept)

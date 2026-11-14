@@ -383,6 +383,7 @@ def game_examples(payload: dict, record: dict, stats_game: dict | None, step: in
                 "rows": rows,
                 "label": label_index,
                 "elimination_verified": status["verified"],
+                "elimination_reasons": status["reasons"],
                 "teams_alive": meta.get("teamsAlive"),
             }
         )

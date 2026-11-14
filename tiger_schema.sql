@@ -14,8 +14,10 @@ CREATE TABLE IF NOT EXISTS matches (
   map_name             text,
   quality_score        double precision,
   organizer_username   text,
-  match_start          timestamptz,
+  match_start          timestamptz,   -- games API time (manifest); not the replay clock
+  replay_match_start   timestamptz,   -- the replay's own match_start; player_frames.ts = this + t
   playing_start_s      integer,
+  evaluation_split     text,          -- frozen session split: train, validation, test
   winner_team_id       integer,
   winner_team_name     text,
   winner_label_source  text
@@ -60,13 +62,17 @@ CREATE TABLE IF NOT EXISTS squad_estimates (
   game_id                integer NOT NULL REFERENCES matches (game_id),
   t                      integer NOT NULL,
   elapsed_s              integer NOT NULL,
+  ts                     timestamptz,   -- replay match_start + t
   team_id                integer NOT NULL,
   prediction_kind        text NOT NULL,
-  model_version          text,
-  model_probability      double precision,
+  model_version          text,          -- JSON provenance: source file, fit, hashes
+  model_probability      double precision,  -- eligibility-constrained (eliminated squads exactly 0)
+  model_probability_raw  double precision,  -- conditional-logit output before the eligibility rule
   baseline_name          text NOT NULL,
   baseline_probability   double precision,
   in_contention          boolean,
+  eliminated             boolean,
+  elimination_verified   boolean,
   PRIMARY KEY (game_id, t, team_id, prediction_kind),
   CONSTRAINT squad_estimates_kind
     CHECK (prediction_kind IN ('held_out', 'final_model_fitted'))
@@ -83,5 +89,15 @@ CREATE TABLE IF NOT EXISTS evaluation_reports (
   baseline_name             text NOT NULL,
   baseline_log_loss         double precision,
   condition_only_log_loss   double precision,
+  metrics_json              text,      -- game-weighted test metrics for every method
   note                      text NOT NULL
 );
+
+-- Columns added after the first draft of this schema.
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS replay_match_start timestamptz;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS evaluation_split text;
+ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS ts timestamptz;
+ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS model_probability_raw double precision;
+ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS eliminated boolean;
+ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS elimination_verified boolean;
+ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS metrics_json text;

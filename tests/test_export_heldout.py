@@ -72,6 +72,21 @@ class ExportTest(unittest.TestCase):
             self.assertAlmostEqual(total, 1.0)
             # Replay clock, not the manifest's games-API match_start.
             self.assertEqual(point["replay_time_unix"], 2_000_000 + (point["game_id"] - 1000) * 100 + point["t"])
+        for point in predictions:
+            constrained = [s["probabilities"]["model_constrained"] for s in point["squads"]]
+            self.assertAlmostEqual(sum(constrained), 1.0)
+            for squad in point["squads"]:
+                if point["eligibility"] == "verified" and squad["eliminated"]:
+                    self.assertEqual(squad["probabilities"]["model_constrained"], 0.0)
+                elif point["eligibility"] != "verified":
+                    self.assertEqual(squad["probabilities"]["model_constrained"], squad["probabilities"]["model"])
+        metrics = json.loads((out / "b1" / "metrics.json").read_text())
+        self.assertEqual(
+            metrics["constrained"]["game_weighted"],
+            config["test_metrics"]["game_weighted"]["model_masked_diagnostic"],
+        )
+        self.assertEqual(bundle["schema_version"], 2)
+        self.assertEqual(bundle["primary_model_probability"], "model_constrained")
         model = json.loads((out / "b1" / "evaluation_model.json").read_text())
         self.assertTrue(set(model["trained_on_games"]).isdisjoint(config["games"]["test"]))
         with tarfile.open(written["archive"]) as tar:

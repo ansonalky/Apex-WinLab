@@ -37,7 +37,10 @@ from pathlib import Path
 import train_model
 from features import CHECKPOINT_STEP, build_dataset, load_accepted
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 1  # frozen config layout
+# Bundle layout. v1: raw model probabilities (audited, preserved as written).
+# v2: adds ``model_constrained`` (eligibility rule) as the primary model output.
+BUNDLE_SCHEMA_VERSION = 2
 CONFIG = Path("config/frozen_evaluation.json")
 PREDICTION_TYPE = "held_out_session_split_test"
 METRIC_TOLERANCE = 1e-9
@@ -138,8 +141,8 @@ def _metrics_match(expected: dict, actual: dict) -> list[str]:
 
 def _checkpoint_entry(group: dict, item: dict, model_probs: list[float], game: dict) -> dict:
     baselines = {
+        "model_constrained": train_model.masked(model_probs, group),
         "model": model_probs,
-        "model_masked_diagnostic": train_model.masked(model_probs, group),
         "uniform": train_model.uniform_baseline(group),
         "uniform_contention": train_model.contention_baseline(group),
         "most_players": train_model.players_baseline(group),
@@ -175,9 +178,14 @@ def _checkpoint_entry(group: dict, item: dict, model_probs: list[float], game: d
         "lobby_size": len(group["rows"]),
         "in_contention": sum(contending),
         "elimination_verified": bool(group.get("elimination_verified")),
+        "eligibility": train_model.eligibility(group),
+        "eligibility_reasons": group.get("elimination_reasons") or [],
         "winner_team_id": group["rows"][group["label"]]["team"],
         "game_weight": None,
-        "scores": {name: item[name] for name in train_model.METHODS},
+        "scores": {
+            "model_constrained": item["model_masked_diagnostic"],
+            **{name: item[name] for name in train_model.METHODS if name != "model_masked_diagnostic"},
+        },
         "squads": squads,
     }
 
@@ -250,11 +258,25 @@ def build_export(config: dict, data_dir: Path) -> dict:
         str(game_id): train_model.summarize([s for s in scored if s["game_id"] == game_id])
         for game_id in config["games"]["test"]
     }
+    overall = metrics["overall"]
+    constrained = {
+        "method": "model_constrained",
+        "definition": (
+            "Frozen evaluation model, unchanged. At each checkpoint, squads with a verified elimination event "
+            "at or before that checkpoint get probability 0 and the rest are renormalized; checkpoints with "
+            "unverified eligibility are left unconstrained. No refit, no tuning."
+        ),
+        "computed_as": "train_model.masked (scored as model_masked_diagnostic in the frozen evaluation)",
+        "game_weighted": overall["game_weighted"]["model_masked_diagnostic"],
+        "checkpoint_weighted": overall["checkpoint_weighted"]["model_masked_diagnostic"],
+        "equals_frozen_diagnostic": True,
+        "unverified_checkpoints": sum(1 for entry in checkpoints if entry["eligibility"] != "verified"),
+    }
     return {
         "model": model,
         "checkpoints": checkpoints,
         "games": games,
-        "metrics": {**metrics, "per_game": per_game},
+        "metrics": {**metrics, "constrained": constrained, "per_game": per_game},
     }
 
 
@@ -269,18 +291,22 @@ Each entry in `heldout_predictions.json` is one 30-second checkpoint:
 - `t`: seconds on the replay clock. `elapsed_s`: seconds since Playing start.
 - `replay_time_unix` / `replay_time_utc`: the replay's own `match_start` + `t`. That clock differs from
   the games API `match_start` by 7-16 s; both values are listed per game in `bundle.json`.
+- `eligibility`: `verified` (eliminations at or before `t` are confirmed and applied) or `unverified`
+  (inconsistent evidence; nothing excluded, see `eligibility_reasons`).
 - `squads[].probabilities`:
-  - `model`: the held-out prediction.
+  - `model_constrained`: **the held-out prediction**. Verified-eliminated squads get exactly 0 and the
+    rest are renormalized. Unverified checkpoints are left unconstrained.
+  - `model`: the raw conditional-logit output before the eligibility rule (the v1 bundle's `model`).
   - `uniform`: 1 / lobby size.
   - `uniform_contention`: 1 / squads not verified eliminated; verified-eliminated squads get 0. This is
     the meaningful uniform reference.
   - `most_players`: all mass on the squads with the most standing players.
-  - `model_masked_diagnostic`: the model with eliminated squads set to 0 and renormalized. Diagnostic only.
 - `eliminated`: a squad elimination feed event at or before `t`, verified against `teamsAlive`. Not a model input.
 - `scores`: per-checkpoint log loss, Brier (sum over squads of (p - y)^2, range 0-2), and top-1.
 - `game_weight` = 1 / checkpoints in that game. Weighted means give each game equal weight.
 
-`metrics.json` repeats the frozen test metrics, recomputed from these predictions. `export_heldout.py`
+`metrics.json` repeats the frozen test metrics, recomputed from these predictions. `constrained` labels the
+eligibility-constrained result; it equals the frozen `model_masked_diagnostic` row because it is the same rule. `export_heldout.py`
 refuses to write the bundle unless they match the frozen values within {tolerance}.
 
 Calibration is withheld below 20 evaluated games (project policy). Six test games is a small sample.
@@ -303,7 +329,7 @@ def write_bundle(export: dict, config: dict, out_dir: Path, name: str, data_dir:
         ).encode("utf-8"),
     }
     bundle = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": BUNDLE_SCHEMA_VERSION,
         "bundle": name,
         "prediction_type": PREDICTION_TYPE,
         "held_out": True,
@@ -323,8 +349,10 @@ def write_bundle(export: dict, config: dict, out_dir: Path, name: str, data_dir:
         },
         "games": [export["games"][game_id] for game_id in config["games"]["test"]],
         "checkpoint_count": len(export["checkpoints"]),
-        "methods": list(train_model.METHODS),
-        "primary_metric": "game-weighted log loss; compare model with uniform_contention",
+        "methods": ["model_constrained", "model", "uniform", "uniform_contention", "most_players"],
+        "primary_model_probability": "model_constrained",
+        "primary_metric": "game-weighted log loss; compare model_constrained with uniform_contention",
+        "supersedes_for_display": "heldout-session-split-v1 (audited raw-model bundle, preserved unchanged)",
         "files": {path: {"sha256": _sha256(body), "bytes": len(body)} for path, body in files.items()},
     }
     files["bundle.json"] = _dump(bundle)
@@ -357,7 +385,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     exp.add_argument("--data-dir", type=Path, default=Path("data"))
     exp.add_argument("--config", type=Path, default=CONFIG)
     exp.add_argument("--out-dir", type=Path, default=Path("data/exports"))
-    exp.add_argument("--name", default="heldout-session-split-v1")
+    exp.add_argument("--name", default="heldout-session-split-v2")
     return parser.parse_args(argv)
 
 
@@ -377,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     written = write_bundle(export, config, args.out_dir, args.name, args.data_dir)
     overall = export["metrics"]["overall"]["game_weighted"]
     print(f"test games {len(config['games']['test'])}, checkpoints {len(export['checkpoints'])}; metrics match frozen values")
-    for method in ("model", "uniform_contention", "uniform"):
+    for method in ("model_masked_diagnostic", "model", "uniform_contention", "uniform"):
         print(f"  {method:20s} log_loss {overall[method]['log_loss']:.3f}")
     print(f"bundle: {written['directory']}")
     print(f"archive: {written['archive']}  sha256 {written['archive_sha256']}")

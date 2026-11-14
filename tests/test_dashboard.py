@@ -170,11 +170,11 @@ def _entry(game_id, t, teams=(1, 2, 3), eliminated=()):
                 "in_contention": team not in eliminated,
                 "standing_players": 2,
                 "probabilities": {
+                    "model_constrained": 0.0 if team in eliminated else (0.6 if team == 1 else 0.4 / (len(teams) - len(eliminated) - 1)),
                     "model": 0.5 if team == 1 else 0.25,
                     "uniform_contention": 0.0 if team in eliminated else 1 / (len(teams) - len(eliminated)),
                     "uniform": 1 / len(teams),
                     "most_players": 1 / len(teams),
-                    "model_masked_diagnostic": 0.5,
                 },
             }
         )
@@ -190,6 +190,8 @@ def _entry(game_id, t, teams=(1, 2, 3), eliminated=()):
         "lobby_size": len(teams),
         "in_contention": len(teams) - len(eliminated),
         "elimination_verified": True,
+        "eligibility": "verified",
+        "eligibility_reasons": [],
         "winner_team_id": 1,
         "squads": squads,
     }
@@ -201,7 +203,7 @@ def _write_bundle(data: Path, entries, games, **overrides):
     body = json.dumps(entries).encode()
     (root / "heldout_predictions.json").write_bytes(body)
     meta = {
-        "schema_version": 1,
+        "schema_version": 2,
         "prediction_type": HELDOUT_PREDICTION_TYPE,
         "held_out": True,
         "final_model_predictions_included": False,
@@ -290,6 +292,10 @@ class JoinTest(unittest.TestCase):
         squad3 = [s for s in view["points"][1]["squads"] if s["teamId"] == 3][0]
         self.assertTrue(squad3["eliminated"])
         self.assertEqual(squad3["uniform_contention"], 0.0)
+        # The displayed model probability is the bundle's constrained value, not the raw one.
+        self.assertEqual(squad3["model"], 0.0)
+        self.assertEqual(squad3["model_unconstrained"], 0.25)
+        self.assertEqual(view["points"][1]["eligibility"], "verified")
 
     def test_join_failures_are_not_shown(self):
         wrong_team = heldout_view(self._bundle([_entry(7, 0, teams=(1, 2, 4))]), 7, self.timeline)
@@ -334,6 +340,11 @@ class FinalCurveTest(unittest.TestCase):
         by_team = {s["teamId"]: s for s in late["squads"]}
         self.assertEqual(by_team[3]["uniform_contention"], 0.0)
         self.assertEqual(by_team[1]["uniform_contention"], 0.5)
+        # Final-model inference applies the same eligibility rule.
+        self.assertEqual(by_team[3]["model"], 0.0)
+        self.assertGreater(by_team[3]["model_unconstrained"], 0.0)
+        self.assertAlmostEqual(sum(s["model"] for s in late["squads"]), 1.0)
+        self.assertEqual(late["eligibility"], "verified")
         self.assertEqual(late["replay_time_utc"], "1970-01-01T00:17:40Z")
         before = {s["teamId"]: s for s in curve["points"][1]["squads"]}
         self.assertFalse(before[3]["eliminated"])
@@ -348,6 +359,11 @@ class FinalCurveTest(unittest.TestCase):
             curve = prediction_curve(timeline["checkpoints"], data, 7, winner=1)
         late = curve["points"][2]  # t 60, after the t 40 elimination
         self.assertFalse(late["elimination_verified"])
+        self.assertEqual(late["eligibility"], "unverified")
+        self.assertIn("teamsAlive_disagrees", late["eligibility_reasons"])
+        # Unverified eligibility: nothing excluded, probabilities unconstrained.
+        for squad in late["squads"]:
+            self.assertEqual(squad["model"], squad["model_unconstrained"])
         self.assertEqual(late["baseline"], "uniform_lobby_fallback")
         self.assertEqual({s["uniform_contention"] for s in late["squads"]}, {1 / 3})
 

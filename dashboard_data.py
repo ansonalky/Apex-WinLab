@@ -25,9 +25,9 @@ from typing import Any
 from features import CHECKPOINT_STEP, contention, elimination_team, squad_rows
 from overstat_patch import apply_frame, export_players, frame_entries, initial_state
 
-HELDOUT_BUNDLE = "heldout-session-split-v1"
+HELDOUT_BUNDLE = "heldout-session-split-v2"
 HELDOUT_PREDICTION_TYPE = "held_out_session_split_test"
-HELDOUT_SCHEMA_VERSION = 1
+HELDOUT_SCHEMA_VERSION = 2
 # Bump when the cached timeline layout changes; older caches are rebuilt.
 CACHE_VERSION = 2
 
@@ -291,7 +291,7 @@ def prediction_curve(
             limitation="The dashboard does not fit a model.",
         )
     model = json.loads(path.read_text(encoding="utf-8"))
-    from train_model import contention_baseline, players_baseline, predict, uniform_baseline
+    from train_model import contention_baseline, eligibility, masked, players_baseline, predict, uniform_baseline
 
     in_sample = game_id in set(model.get("trained_on_games") or [])
     points = []
@@ -302,7 +302,10 @@ def prediction_curve(
         for row, flag in zip(rows, status["flags"]):
             row["eliminated"] = flag
         group = {"rows": rows, "elimination_verified": status["verified"]}
-        model_probs = predict(model, group)
+        raw = predict(model, group)
+        # Eligibility rule at this checkpoint: verified-eliminated squads get
+        # exactly 0 and the rest are renormalized (unchanged when unverified).
+        model_probs = masked(raw, group)
         contention_probs = contention_baseline(group)
         uniform = uniform_baseline(group)
         most = players_baseline(group)
@@ -312,6 +315,8 @@ def prediction_curve(
                 "elapsed": checkpoint["elapsed"],
                 "replay_time_utc": _utc(replay_match_start, checkpoint["t"]),
                 "elimination_verified": status["verified"],
+                "eligibility": eligibility(group),
+                "eligibility_reasons": status["reasons"],
                 "baseline": "uniform_contention" if status["verified"] else "uniform_lobby_fallback",
                 "in_contention": sum(1 for flag in status["flags"] if not flag) if status["verified"] else len(rows),
                 "squads": [
@@ -320,6 +325,7 @@ def prediction_curve(
                         "team_name": row.get("team_name"),
                         "eliminated": row["eliminated"],
                         "model": model_probs[index],
+                        "model_unconstrained": raw[index],
                         "uniform_contention": contention_probs[index],
                         "uniform": uniform[index],
                         "most_players": most[index],
@@ -437,12 +443,15 @@ def heldout_view(bundle: dict, game_id: Any, timeline: dict) -> dict:
                 "teams_alive": entry.get("teams_alive"),
                 "in_contention": entry.get("in_contention"),
                 "elimination_verified": entry.get("elimination_verified"),
+                "eligibility": entry.get("eligibility"),
+                "eligibility_reasons": entry.get("eligibility_reasons") or [],
                 "squads": [
                     {
                         "teamId": squad["team_id"],
                         "team_name": squad.get("team_name"),
                         "eliminated": squad.get("eliminated"),
-                        "model": squad["probabilities"]["model"],
+                        "model": squad["probabilities"]["model_constrained"],
+                        "model_unconstrained": squad["probabilities"]["model"],
                         "uniform_contention": squad["probabilities"]["uniform_contention"],
                         "uniform": squad["probabilities"]["uniform"],
                         "most_players": squad["probabilities"]["most_players"],
@@ -475,11 +484,24 @@ def heldout_view(bundle: dict, game_id: Any, timeline: dict) -> dict:
         "baseline": "uniform_contention",
         "points": points,
         "limitation": (
-            "Held-out: made by a model fit on other tournament sessions. Predictions exist every 30 s; "
+            "Held-out: made by a model fit on other tournament sessions, with squads verified eliminated by the "
+            "prediction time set to 0 and the rest renormalized. Predictions exist every 30 s; "
             "between checkpoints the most recent past prediction is shown with its own time. "
             "Six test games is a small sample; this is demo evidence, not a settled result."
         ),
     }
+
+
+def constrained_metrics(metrics: dict) -> dict:
+    """Name the frozen ``model_masked_diagnostic`` row as the constrained model.
+
+    It is the same eligibility rule (``train_model.masked``) applied to the
+    same frozen predictions; the v2 export checks the numbers are equal.
+    """
+    metrics = dict(metrics)
+    if "model_masked_diagnostic" in metrics:
+        metrics["model_constrained"] = metrics.pop("model_masked_diagnostic")
+    return metrics
 
 
 def evaluation_panel(data_dir: Path) -> dict:
@@ -509,7 +531,7 @@ def evaluation_panel(data_dir: Path) -> dict:
         "warning": evaluation.get("warning"),
         "games": evaluation.get("games"),
         "l2": evaluation.get("l2"),
-        "metrics": overall,
+        "metrics": constrained_metrics(overall),
         "calibration": test.get("calibration"),
         "generated_at": report.get("generated_at"),
         "limitation": (
@@ -522,6 +544,8 @@ def evaluation_panel(data_dir: Path) -> dict:
 
 class MatchStore:
     """Caches one reconstructed timeline per game. Slider reads do not replay."""
+
+    backend = "files"
 
     def __init__(self, data_dir: Path, bundle_name: str = HELDOUT_BUNDLE):
         self.data_dir = data_dir
@@ -639,3 +663,6 @@ class MatchStore:
 
     def heldout_points(self, game_id: int) -> dict:
         return self.heldout(game_id)
+
+    def evaluation(self) -> dict:
+        return evaluation_panel(self.data_dir)
