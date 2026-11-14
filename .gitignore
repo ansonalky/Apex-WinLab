@@ -1,0 +1,13 @@
+# Virtual environment and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets
+.env
+*.pem
+credentials
+credentials.*
+
+# Downloaded telemetry payloads and their manifests
+data/
