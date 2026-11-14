@@ -4,7 +4,40 @@
 
 ## Status (2026-11-14)
 
-**No model has been trained and no evaluation results exist.** On this machine there is no `data/` directory in either worktree, and no `*.timeseries.json` file anywhere on disk. HANDOFF.md (after d19072d) records 0 accepted games: four downloaded games have verified winners, but all four are below quality 7.0. `train_model.py` stops with `status: insufficient_data` and exit code 2. No extraction smoke test on real data has been run yet. The synthetic tests check the mechanics only. They are not evidence of model performance.
+First real run on the collection from d7196f5. The synthetic tests check mechanics only; the figures below are the only performance evidence.
+
+**Data checks:**
+- 51 accepted games across **22** sessions (HANDOFF.md says 23).
+- All 51 raw files match their manifest `sha256`.
+- Every `download_path` is a local relative `data/raw/...` path; none point to `/workspace`.
+- All 22 sessions have a stats cache, and each game has exactly one standings entry.
+- All 51 labels include the standings source, and all 51 pass the `resolve_winner` cross-check.
+
+**Extraction:** 3 games first, then all 51, with no drops: 2,045 checkpoint groups and 37,544 squad rows (20 squads per group). 9,816 squad rows have no standing player. The verified winner never has zero standing players at a checkpoint.
+
+**Status semantics on real data:** the number of squads with a standing player equals the replay's own `teamsAlive` at 1,801 of 2,045 checkpoints. It is off by ±1 at 236 and by +2 at 8. Squads went from no standing player back to standing 8 times. Status alone is therefore not a reliable elimination signal, which supports keeping no-standing squads as candidates.
+
+**Session-split evaluation:**
+
+| Split | Sessions | Games |
+| --- | --- | --- |
+| Train | 14 | 36 |
+| Validation | 4 | 9 |
+| Test | 4 | 6 (238 groups) |
+
+`l2` = 0.01 was chosen on validation. It is the smallest value in the grid, so a wider grid could change it. Every fit converged in 7 Newton steps with `max|grad|` below 1e-7.
+
+| Test, game-weighted | Log loss | Brier | Top-1 |
+| --- | --- | --- | --- |
+| Model | **2.345** | 0.881 | 0.147 |
+| Uniform | 2.850 | 0.942 | 0.058 |
+| Most standing players | 2.637 | 0.876 | 0.126 |
+
+Checkpoint-weighted results are within 0.002. By elapsed time, model versus uniform log loss is 2.76/2.85 (0–5 min), 2.60/2.85 (5–10), 2.43/2.85 (10–15), and 1.55/2.85 (15–20). The model beats uniform on each of the 6 test games, by 0.41–0.53 nats. It is slightly worse than the most-players heuristic on Brier, and in the first 5 minutes.
+
+**Calibration not reported:** only 6 test games, and 20 are required. Six games from four sessions is a small test set; these numbers are a first estimate, not a settled result.
+
+Features that are always tied together (`no_standing` with `center_dist_missing` and `spread_missing`; the four status counts sum to squad size) make individual weights non-interpretable. L2 keeps the fit unique.
 
 ## Input contract
 
@@ -108,12 +141,16 @@ Training needs at least 20 usable games that produce labeled groups (`--min-game
 
 ## Commands
 
+Python 3.10+ (run on 3.12.3), standard library only. No `pip install` is needed. The data directory defaults to `data` relative to the current directory, and `--data-dir` overrides it. Raw `download_path` values are resolved relative to the current directory first, so run from the repository root.
+
 ```sh
-python3 -m unittest tests.test_features tests.test_train_model -q
-python3 train_model.py                  # DATA=data -> data/models/report.json
+python3 -m unittest tests.test_features tests.test_train_model tests.test_collection tests.test_overstat_patch -q
+python3 features.py --data-dir data     # extraction only -> data/models/extraction.json
+python3 train_model.py --data-dir data  # extraction + evaluation + fit -> data/models/report.json, model.json
+python3 train_model.py --data-dir /path/to/data --out-dir /path/to/models
 ```
 
-`report.json` is always written. It contains the inventory, dataset counts, dropped games with reasons, eligibility diagnostics, evaluation, and optimizer state. `model.json` is written only when status is `trained`.
+`features.py` exits 2 when no group was produced. `extraction.json` holds the inventory, drops, and per-game eligibility diagnostics. `report.json` is always written. It contains the inventory, dataset counts, dropped games with reasons, eligibility diagnostics, evaluation, and optimizer state. `model.json` is written only when status is `trained`.
 
 ## Notes for collection
 

@@ -9,8 +9,10 @@ import copy
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
+import features
 from features import (
     FEATURES,
     STANDINGS_SOURCE,
@@ -280,6 +282,21 @@ class LoadAcceptedTest(unittest.TestCase):
             self.assertEqual(len(groups), 3)
             self.assertEqual(dropped, [])
             self.assertEqual(diagnostics["1"]["checkpoints"], 3)
+
+    def test_extraction_cli_writes_a_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            write_dataset(
+                data,
+                [{"game_id": 1, "session_id": 9, "winner": 1, "payload": synthetic_game(winner_out=((35, "dead"), (60, "alive")))}],
+            )
+            with mock.patch("builtins.print"):
+                code = features.main(["--data-dir", str(data)])
+            summary = json.loads((data / "models" / "extraction.json").read_text())
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["checkpoint_groups"], 3)
+        self.assertEqual(summary["winner_no_standing_checkpoints"], 1)
+        self.assertEqual(summary["games_with_winner_no_standing"], 1)
 
     def test_missing_manifest_is_reported_not_raised(self):
         with tempfile.TemporaryDirectory() as tmp:

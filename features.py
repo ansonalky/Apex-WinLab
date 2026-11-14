@@ -28,8 +28,10 @@ undefined, so distances are only compared within one snapshot.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -389,3 +391,58 @@ def build_dataset(records: list[dict], data_dir: Path, step: int = CHECKPOINT_ST
         if not game["groups"] or game["skipped"]:
             dropped.append({"game_id": record.get("game_id"), "groups": len(game["groups"]), "skipped": game["skipped"]})
     return groups, dropped, diagnostics
+
+
+def extraction_summary(data_dir: Path, step: int = CHECKPOINT_STEP) -> dict:
+    """Inventory, dataset counts, drops, and eligibility diagnostics. No model."""
+    records, inventory = load_accepted(data_dir)
+    groups, dropped, diagnostics = build_dataset(records, data_dir, step)
+    per_game = list(diagnostics.values())
+    return {
+        "data_dir": data_dir.as_posix(),
+        "checkpoint_step_s": step,
+        "inventory": inventory,
+        "games_with_groups": len({group["game_id"] for group in groups}),
+        "sessions_with_groups": len({str(group["session_id"]) for group in groups}),
+        "checkpoint_groups": len(groups),
+        "squad_rows": sum(len(group["rows"]) for group in groups),
+        "squad_rows_no_standing": sum(item["squads_no_standing"] for item in per_game),
+        "winner_no_standing_checkpoints": sum(len(item["winner_no_standing"]) for item in per_game),
+        "games_with_winner_no_standing": sum(1 for item in per_game if item["winner_no_standing"]),
+        "dropped": dropped,
+        "eligibility": diagnostics,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Extract checkpoint features without training.")
+    parser.add_argument("--data-dir", type=Path, default=Path("data"))
+    parser.add_argument("--out", type=Path, default=None, help="Default: <data-dir>/models/extraction.json")
+    args = parser.parse_args(argv)
+    summary = extraction_summary(args.data_dir)
+    out = args.out or args.data_dir / "models" / "extraction.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    inventory = summary["inventory"]
+    print(
+        f"manifest {'found' if inventory['manifest_exists'] else 'missing'}: "
+        f"{inventory['accepted_in_manifest']} accepted, {inventory['usable']} usable, "
+        f"{len(inventory['accepted_label_unverified'])} label unverified, "
+        f"{len(inventory['accepted_missing_raw'])} missing raw"
+    )
+    print(
+        f"groups: {summary['checkpoint_groups']} from {summary['games_with_groups']} games "
+        f"in {summary['sessions_with_groups']} sessions; {summary['squad_rows']} squad rows"
+    )
+    print(
+        f"no-standing squad rows: {summary['squad_rows_no_standing']}; "
+        f"winner with no standing player: {summary['winner_no_standing_checkpoints']} checkpoints "
+        f"in {summary['games_with_winner_no_standing']} games"
+    )
+    print(f"games with drops: {len(summary['dropped'])}")
+    print(f"summary: {out.as_posix()}")
+    return 0 if summary["checkpoint_groups"] else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
