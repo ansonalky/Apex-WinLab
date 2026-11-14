@@ -42,6 +42,20 @@ def numeric_score(value: Any) -> float | None:
     return float(value)
 
 
+def download_gate(record: dict, minimum: float) -> str | None:
+    """Reason to skip a telemetry download. None means the game is a candidate.
+
+    Metadata is filtered before any large replay body is fetched.
+    """
+    if record.get("reason") == "duplicate":
+        return "duplicate"
+    if record.get("score_scope_unresolved"):
+        return "score_scope_unresolved"
+    if not record.get("livedata_id"):
+        return "replay_missing"
+    return quality_reason(record.get("quality_score"), minimum)
+
+
 def quality_reason(score: float | None, minimum: float) -> str | None:
     if score is None:
         return "quality_unknown"

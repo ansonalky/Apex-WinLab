@@ -6,8 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from collect_matches import fetch_telemetry, search_url
 from collection import (
     decide,
+    download_gate,
     game_quality,
     mark_duplicates,
     quality_reason,
@@ -15,7 +17,6 @@ from collection import (
     session_quality,
 )
 from overstat_patch import export_players
-from collect_matches import fetch_telemetry
 
 
 class QualityTest(unittest.TestCase):
@@ -26,6 +27,12 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(quality_reason(None, 7.0), "quality_unknown")
         self.assertIsNone(game_quality({"analytics": {}}))
         self.assertEqual(game_quality({"analytics": {"qualityScore": 0}}), 0.0)
+        self.assertEqual(download_gate({"quality_score": 6.9, "livedata_id": "x"}, 7.0), "below_quality_threshold")
+        self.assertEqual(download_gate({"quality_score": 0, "livedata_id": "x"}, 7.0), "below_quality_threshold")
+        self.assertIsNone(download_gate({"quality_score": 7, "livedata_id": "x"}, 7.0))
+        self.assertEqual(download_gate({"quality_score": None, "livedata_id": "x"}, 7.0), "quality_unknown")
+        self.assertIn("name=", search_url(0, 20, "", ""))
+        self.assertIn("organizer=octane", search_url(20, 20, "ALGS", "octane"))
 
     def test_session_score_is_not_used_as_the_game_score(self):
         stats = {"analytics": {"qualityScore": 9.5}, "games": [{"id": 1, "analytics": {}}]}
