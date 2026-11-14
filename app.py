@@ -14,12 +14,14 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template
 
 from dashboard_data import MatchStore, evaluation_panel, list_matches
+from map_api import map_bp
 
 
 def create_app(data_dir: Path) -> Flask:
     app = Flask(__name__)
     store = MatchStore(data_dir.resolve())
     app.config["DATA_DIR"] = store.data_dir
+    app.register_blueprint(map_bp)
 
     @app.get("/")
     def index():
