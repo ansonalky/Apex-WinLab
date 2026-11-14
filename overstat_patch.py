@@ -402,3 +402,35 @@ def default_checkpoints(state_names: list[Any]) -> list[int]:
     start, end = bounds
     middle = start + (end - start) // 2
     return [start, middle, end]
+
+
+def unsupported_deltas(delta: Any, path: str = "$", found: list[str] | None = None, limit: int = 10) -> list[str]:
+    """Return paths of delta nodes the bundled patcher cannot apply.
+
+    Atomic one- and two-element arrays, object deletes ``[old, 0, 0]``,
+    and array moves ``[value, index, 3]`` are supported. Text diffs and
+    anything else are not. Values inside an atomic delta are data, not
+    further deltas.
+    """
+    if found is None:
+        found = []
+    if len(found) >= limit:
+        return found
+    if isinstance(delta, list):
+        if len(delta) in (1, 2):
+            return found
+        if len(delta) == 3 and delta[2] in (0, 3):
+            return found
+        found.append(path)
+        return found
+    if isinstance(delta, dict):
+        if not delta or ("_t" in delta and delta.get("_t") != "a"):
+            found.append(path)
+            return found
+        for key, child in delta.items():
+            if key == "_t":
+                continue
+            unsupported_deltas(child, f"{path}.{key}", found, limit)
+        return found
+    found.append(path)
+    return found

@@ -1,62 +1,55 @@
 # Handoff
 
-Paused after Milestone 2. Working tree was clean before this file. No payload or bundle was reread for this note.
+Milestone 3 trial is done for one known session. No features, model, database, or UI. Stop here. Do not expand to 50 games yet.
 
-## Objective and milestone
+## Objective
 
-Apex WinLab turns public Overstat telemetry into model-ready historical features. Do not build features, a model, a database, or a UI yet.
+Accept a unique game only when its per-game quality score is >= 7.0 and replay validation passes. This trial used session **23231** (Octane Collegiate, `https://overstat.gg/tournament/octanecollegiate/23231.S5_Premier_Lobby1_Week_6/replay/3`).
 
-Milestone 1 (done): download one timeseries and inspect its structure. Milestone 2 (done): reproduce the replay frontend's historical decoder and export three active-play player snapshots. Stop here.
+## Score
 
-Sample id: `623ae07f-81cf-4634-ad7f-2d27f7911896`. Branch `main` at `e1e1dbb` before this handoff (`920f1e6` download/inspect, `e1e1dbb` decoder). Pushed to `origin/main`.
+Field: `games[].analytics.qualityScore` on `GET https://overstat.gg/api/stats/23231/overall`. Scope: **individual game**. The standings UI (chunks `243.1b8ae876.js` and `8575.c2d176bd.js`) shows `Math.floor(100 * stats.analytics.qualityScore) / 100` for the selected game object. Session `analytics.qualityScore` is separate (here 2.323) and is not copied onto games. The server owns the formula. Unknown stays unknown, not zero. A stored 0 is a real score and fails 7.0.
 
-## Completed work and commands
+## Trial result
 
-Python 3.12 venv at `.venv` (stdlib only). Raw file and manifest are gitignored under `data/`.
+6 games, 5 with livedata. **Accepted: 0.** New downloads: 3. Temporary failures: 0.
 
-```powershell
-.\.venv\Scripts\python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python download_match.py
-python inspect_match.py
-python -m unittest tests.test_overstat_patch -v
-python reconstruct_match.py
-python reconstruct_match.py --t 62 --t 639 --t 1217
+| Game | Id | Quality | Livedata | Download | Validation | Reason |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 123536 | 2.979 | yes | new | outcome_unknown | below_quality_threshold |
+| 2 | 123540 | 4.961 | yes | new | outcome_unknown | below_quality_threshold |
+| 3 | 123544 | 1.275 | yes | cached sample, not rewritten | passed (team 20, Campbellsville) | below_quality_threshold |
+| 4 | 123547 | 1.887 | no | not attempted | not run | replay_missing |
+| 5 | 123550 | 2.835 | yes | new | outcome_unknown | below_quality_threshold |
+| 6 | 123553 | 0 | yes | not attempted (cap) | not run | below_quality_threshold |
+
+New files, bytes unchanged, 12:28 PM PT: `cbe8db3d-0a4a-4479-828a-4c92965ad8b7` sha256 `eb60f9415bd9…`, `7c8ac260-c90c-48a2-aa04-200fed795756` sha256 `632f46fd048d…`, `220adc2c-fcb3-46be-9f96-c50d5cee8aaf` sha256 `1408069079fd…`. Manifest: `data/collection/manifest.json`. The milestone 1 raw file was not modified.
+
+The three new replays reconstructed. Playing checkpoints had positions and team ids (58 or 60 players). Raw series still includes the frontend-omitted last `t`. Winner rule failed: `teamsAlive == 1` but no single non-eliminated, non-dead team. `teamPlacement` was not used. The cached sample did identify one such squad, then quality excluded it.
+
+## Decoder interface
+
+`overstat_patch.replay(series, checkpoints=None)` starts at `{feed: []}`, applies `patchData` (`d` then append `f`), and returns `state`, `observed`, `state_names`, `failures`, `snapshots`, `checkpoint_meta`, `frame_count`, `omitted_t`. `omitted_t` is `series[-1].t`, which the frontend drops via `new Array(last.t)`. `snapshots[t]` is `export_players`: each row has `nucleusHash`, and `name`, `teamId`, `teamName`, `health.current`, `health.max`, `shields.current`, `shields.max`, and `status` as `{value, observed_at, gap}`. `pos` is `{value:{x,y,z}, observed_at, gap}`. Null value and null gap mean unknown. `gap` 0 was written on that frame.
+
+`apply_frame(state, delta, events, observed, t)` returns `(state, observed, error)`. `unsupported_deltas` flags text diffs and other non-patch nodes; those fail validation instead of being skipped.
+
+Explicit checks, not freshness thresholds: quality >= 7.0; a livedata payload; no unsupported ops or patch failures; Playing exists; each of the three Playing checkpoints has one player with `pos.x` and `teamId`; winner is `teamsAlive == 1` and exactly one team not `eliminated` or `dead`.
+
+## Commands
+
+```sh
+.venv/bin/python -m unittest tests.test_collection tests.test_overstat_patch -q
+.venv/bin/python collect_matches.py preview --session 23231 --min-quality 7.0
+.venv/bin/python collect_matches.py trial --session 23231 --limit-games 10 --max-downloads 3 --min-quality 7.0
+.venv/bin/python collect_matches.py resume --session 23231 --max-downloads 3 --min-quality 7.0
 ```
 
-`reconstruct_match.py` writes `data/derived/checkpoints.json`. Default checkpoints are the start, midpoint, and end of reconstructed `Playing`: **t = 62, 639, 1217**.
+`run --accepted-target 50` only walks this one session. It was not executed. Fifty accepted games needs more sessions later.
 
-## Decoder
+## Files and tests
 
-`patchData(state, d, f)` is in the public bundle. It calls jsondiffpatch `patch` on `d`, then appends `f` to `state.feed`. `f` does not change player fields.
+`collect_matches.py`, `collection.py`, `tests/test_collection.py`, `overstat_patch.py` (`unsupported_deltas`), `download_match.py` reused for hash, atomic write, and the single-sample manifest. Tests: 27 passed.
 
-- Replay page: https://overstat.gg/tournament/octanecollegiate/23231.S5_Premier_Lobby1_Week_6/replay/3
-- Route table: https://overstat.gg/js/app.88b57234.js (`tournament.replay` loads chunk 9107)
-- Caller: https://overstat.gg/js/9107.be2636c4.js
-- `patchData` and bundled patcher: https://overstat.gg/js/8333.38781711.js (webpack modules 2003 and 3121)
+## Unresolved
 
-One-element `[new]` sets the value. Two-element `[old, new]` sets `new` (not a merge). `[old, 0, 0]` deletes an object key. `_t: "a"` is an array edit. Text diffs throw; the default patcher has no diff-match-patch.
-
-Initial state is `{feed: []}`. The timeline is `new Array(series[series.length - 1].t)`, so **t = 1251** (`Resolution` to `Postmatch`) is not applied. Reconstructed state ends at `Resolution`. `payload.match` stays separate (`Postmatch`, `teamsAlive` 1) under `final_outcomes_not_model_input`.
-
-`t` is seconds after `match_start`. All 1,993 events match `int(timestamp) - int(match_start) == t`. The t = 62 delta also writes `game_start` and enters `Playing`; `game_start - match_start` is 62. The frontend clock uses `match_start`, not `game_start`.
-
-Checkpoints: 60 players, 20 teams. Reconstructed `teamsAlive` is 20, then 11, then 2. Missing fields stay null. `gap` 0 means written on that frame; a larger gap is carried forward. Python matched the bundled patcher on all 1,980 compared player fields. 0 patch failures. Report: `docs/historical-state-decoder.md`.
-
-## Collection policy
-
-Collect only matches with **quality >= 7.0 AND validated replay data**. Both are required. This policy is not implemented in code yet. The one sample above was already downloaded before the policy was recorded here; do not treat that download as a collection pass.
-
-## Files, tests, unresolved
-
-Changed: `.gitignore`, `requirements.txt`, `download_match.py`, `inspect_match.py`, `overstat_patch.py`, `reconstruct_match.py`, `tests/__init__.py`, `tests/test_overstat_patch.py`, `docs/historical-state-decoder.md`, this file.
-
-Tests: `python -m unittest tests.test_overstat_patch -v` — 22 tests, OK (about 0.17s). The sample hash test runs only when the raw file is present.
-
-Unresolved: this file has no text diffs or array moves. Array deltas only edit `observers.*.targetTeam`; the meaning of `observers` is unknown. Coordinate units and `angles` are not defined by `patchData`. Why t = 0 player objects are replaced at t = 1–2 is unknown. Whether dropping t = 1251 is intentional is unknown. A throw after a nested write would keep that write; this sample never throws. Status strings seen: `alive`, `downed`, `eliminated`, `dead`.
-
-## Processes and next action
-
-No project process is running. Platform node and editor processes are not part of the replay.
-
-Next action: do not reread the payload or the JS bundles. Do not start features, modeling, a database, or a UI. When collection resumes, admit a match only if quality is at least 7.0 and its replay data is validated, then run the existing decoder on those matches.
+No game in session 23231 met 7.0, so nothing was accepted. Winner evidence is missing when every player is `eliminated` or `dead`, or when a second team is still `downed`. Coordinate units and `angles` are still undefined. The quality formula is not in the frontend.
