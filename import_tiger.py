@@ -49,8 +49,8 @@ INSERT_MATCH = """
 INSERT INTO matches (
   game_id, session_id, event, map_name, quality_score, organizer_username,
   match_start, replay_match_start, playing_start_s, evaluation_split,
-  winner_team_id, winner_team_name, winner_label_source
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  winner_team_id, winner_team_name, winner_label_source, conclusion_t
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (game_id) DO UPDATE SET
   session_id = EXCLUDED.session_id,
   event = EXCLUDED.event,
@@ -63,7 +63,8 @@ ON CONFLICT (game_id) DO UPDATE SET
   evaluation_split = EXCLUDED.evaluation_split,
   winner_team_id = EXCLUDED.winner_team_id,
   winner_team_name = EXCLUDED.winner_team_name,
-  winner_label_source = EXCLUDED.winner_label_source
+  winner_label_source = EXCLUDED.winner_label_source,
+  conclusion_t = EXCLUDED.conclusion_t
 """
 
 INSERT_SQUAD = "INSERT INTO squads (game_id, team_id, team_name) VALUES (%s, %s, %s)"

@@ -100,6 +100,7 @@ def match_tuple(record: dict, timeline: dict, split: str | None = None) -> tuple
         winner.get("teamId"),
         winner.get("teamName"),
         winner.get("label_source"),
+        timeline.get("conclusion_t"),
     )
 
 

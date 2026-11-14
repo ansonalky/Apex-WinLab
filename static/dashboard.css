@@ -22,6 +22,8 @@ canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c33
 .hp > span { background: #e15759; }
 .sh > span { background: #4e79a7; }
 .unavailable { color: #f0c674; }
+.outcome { margin: 0.6rem 0; padding: 0.5rem 0.75rem; border-left: 3px solid #8cd17d; background: #1f2a22; color: #e6ebf2; max-width: 70rem; }
+.outcome.cut { border-left-color: #f0c674; background: #2a2618; }
 .backend { font-size: 0.85rem; margin: 0.4rem 0 0; }
 .backend strong { padding: 0.1rem 0.45rem; border-radius: 99px; }
 .backend.tiger strong { background: #1f4a33; color: #8cd17d; }

@@ -100,6 +100,8 @@ function mapCordR(value, spec) {
 }
 
 function ringText(ring) {
+  if (ring && ring.state === "closing_unrecorded") return `Ring ${ring.stage} · closing; the replay ends before this ring's end, so it is not drawn`;
+  if (ring && ring.state === "unavailable") return "Ring: not available at this time";
   if (!ring || ring.state === "none" || !ring.location) return "Ring: none at this time";
   const countdown = ring.countdown_s == null ? "" : ` ${formatClock(ring.countdown_s)}`;
   const state = ring.state === "closing" ? "closing" : "waiting";

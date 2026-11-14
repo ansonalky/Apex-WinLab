@@ -97,6 +97,13 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
             abort(404)
         return jsonify(frame)
 
+    @app.get("/api/matches/<int:game_id>/at/<int:t>")
+    def match_frame_at(game_id: int, t: int):
+        frame = store.frame_at(game_id, t)
+        if frame is None:
+            abort(404)
+        return jsonify(frame)
+
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):
         return jsonify(store.curve_points(game_id))

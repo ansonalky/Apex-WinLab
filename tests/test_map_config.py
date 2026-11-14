@@ -45,6 +45,19 @@ class TransformTest(unittest.TestCase):
             self.assertIsNotNone(spec)
             self.assertTrue(spec["image"].endswith(f"{map_id}.webp"))
 
+    def test_stage_the_replay_ends_inside_is_not_drawn(self):
+        center = {"x": 0, "y": 0}
+        rings = [
+            {"stage": 0, "start": 10, "end": 20, "startSize": 100, "endSize": 50, "startCenter": center, "endCenter": center},
+            {"stage": 1, "start": 30, "startSize": 50, "endSize": 1, "startCenter": center},
+        ]
+        self.assertEqual(current_ring(rings, 25)["state"], "waiting")
+        self.assertEqual(current_ring(rings, 25)["stage"], 1)
+        late = current_ring(rings, 40)
+        self.assertEqual(late["state"], "closing_unrecorded")
+        self.assertEqual(late["stage"], 1)
+        self.assertIsNone(late["location"])
+
     def test_worlds_edge_ring_matches_the_replay_formula(self):
         data = Path(__file__).resolve().parents[1] / "data"
         manifest = data / "collection" / "manifest.json"

@@ -101,6 +101,10 @@ class ApiTest(unittest.TestCase):
             first = client.get("/api/matches/7/frames/0").get_json()
             second = client.get("/api/matches/7/frames/1").get_json()
             self.assertEqual(second["players"][0]["x"], 12)
+            # Seeks are by replay second; a second past the end returns the last frame.
+            self.assertEqual((summary["first_t"], summary["last_t"]), (0, 1))
+            self.assertEqual(client.get("/api/matches/7/at/1").get_json()["t"], 1)
+            self.assertEqual(client.get("/api/matches/7/at/99").get_json()["t"], 1)
             self.assertTrue((data / "dashboard" / "7.json").is_file())
             store = MatchStore(data)
             self.assertEqual(store.frame(7, 0)["t"], first["t"])
@@ -251,6 +255,24 @@ class CheckpointSelectionTest(unittest.TestCase):
         late = build_timeline(_long_series(decided_at=60))
         self.assertEqual([c["elapsed"] for c in late["checkpoints"]], [0, 30])
         self.assertGreater(len(late["frames"]), 61)
+
+    def test_frames_reach_the_recorded_conclusion_without_new_checkpoints(self):
+        timeline = build_timeline(_long_series(decided_at=95))
+        self.assertEqual(timeline["conclusion_t"], 115)
+        self.assertEqual(timeline["frames"][-1]["t"], 115)
+        self.assertTrue(timeline["frames"][-1]["finished"])
+        self.assertFalse(any(frame["finished"] for frame in timeline["frames"] if frame["t"] < 115))
+        self.assertEqual([c["elapsed"] for c in timeline["checkpoints"]], [0, 30, 60, 90])
+
+    def test_no_checkpoint_after_playing_ends_even_if_teams_alive_is_unknown(self):
+        series = _long_series(decided_at=95)
+        series[2] = {"t": 50, "d": {"state": ["Playing", "WinnerDetermined"]}, "f": []}
+        series[3] = {"t": 100, "d": {"tail": [1]}, "f": []}
+        series[4] = {"t": 140, "d": {"tail": [2]}, "f": []}
+        timeline = build_timeline(series)
+        self.assertEqual([c["elapsed"] for c in timeline["checkpoints"]], [0, 30])
+        self.assertEqual(timeline["conclusion_t"], 50)
+        self.assertEqual(timeline["frames"][-1]["t"], 139)
 
 
 class BundleTest(unittest.TestCase):

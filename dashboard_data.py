@@ -29,7 +29,7 @@ HELDOUT_BUNDLE = "heldout-session-split-v2"
 HELDOUT_PREDICTION_TYPE = "held_out_session_split_test"
 HELDOUT_SCHEMA_VERSION = 2
 # Bump when the cached timeline layout changes; older caches are rebuilt.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 PALETTE = (
     "#4e79a7",
@@ -165,16 +165,21 @@ def _decided(state: dict) -> bool:
 
 
 def build_timeline(series: list[dict]) -> dict:
-    """One decoder pass. Frames cover Playing only, one per replay second.
+    """One decoder pass. Frames run from Playing start to the end of the
+    telemetry, one per replay second, so the viewer can reach the recorded
+    ``WinnerDetermined`` state. Frames from that state on are ``finished``.
 
-    Checkpoints are every 30 s from Playing start and stop once the replay
-    reports ``teamsAlive <= 1``, the same cut-off as ``features``. Squad
+    Checkpoints are every 30 s during Playing only and stop once the replay
+    reports ``teamsAlive <= 1``, the same cut-off as ``features``. Frames after
+    the outcome are for viewing and never become checkpoints. Squad
     elimination events are tracked causally for the contention baseline.
     """
     state = initial_state()
     observed: dict = {}
     start = None
     decided = False
+    concluded = None
+    left_playing = False
     frames = []
     checkpoints = []
     eliminated: dict[Any, int] = {}
@@ -193,21 +198,26 @@ def build_timeline(series: list[dict]) -> dict:
                 eliminated[team] = t
         if error:
             continue
-        if state.get("state") != "Playing":
-            if start is None:
-                continue
-            break
+        playing = state.get("state") == "Playing"
         if start is None:
+            if not playing:
+                continue
             start = t
+        if concluded is None and state.get("state") == "WinnerDetermined":
+            concluded = t
         exported = export_players(state, observed, t)
         elapsed = t - start
         frames.append(
             {
                 "t": t,
                 "elapsed": elapsed,
+                "finished": concluded is not None,
                 "players": [_compact_player(row) for row in exported],
             }
         )
+        left_playing = left_playing or not playing
+        if left_playing:
+            continue
         decided = decided or _decided(state)
         if elapsed % CHECKPOINT_STEP == 0 and not decided:
             checkpoints.append(
@@ -228,6 +238,17 @@ def build_timeline(series: list[dict]) -> dict:
         "replay_match_start": state.get("match_start"),
         "frames": frames,
         "checkpoints": checkpoints,
+        "conclusion_t": concluded,
+    }
+
+
+def replay_range(times: list[dict], playing_start: int | None, conclusion_t: int | None) -> dict:
+    """Slider bounds in replay seconds, and whether the conclusion is recorded."""
+    return {
+        "first_t": times[0]["t"] if times else None,
+        "last_t": times[-1]["t"] if times else None,
+        "conclusion_t": conclusion_t,
+        "conclusion_elapsed": None if conclusion_t is None or playing_start is None else conclusion_t - playing_start,
     }
 
 
@@ -586,6 +607,7 @@ class MatchStore:
             "squads": _squads(built["frames"]),
             "frames": built["frames"],
             "checkpoints": built["checkpoints"],
+            "conclusion_t": built["conclusion_t"],
         }
         disk.parent.mkdir(parents=True, exist_ok=True)
         disk.write_text(json.dumps(stored) + "\n", encoding="utf-8")
@@ -640,6 +662,7 @@ class MatchStore:
             "playing_start": timeline["playing_start"],
             "frame_count": len(timeline["frames"]),
             "times": [{"t": frame["t"], "elapsed": frame["elapsed"]} for frame in timeline["frames"]],
+            **replay_range(timeline["frames"], timeline["playing_start"], timeline.get("conclusion_t")),
             "squads": timeline["squads"],
             "coordinate_note": timeline["coordinate_note"],
             "heldout": self._header(self.heldout(game_id)),
@@ -657,6 +680,14 @@ class MatchStore:
         for name, view in (("heldout", self.heldout(game_id)), ("final", self.curve(game_id))):
             selected[name] = checkpoint_at(view.get("points") or [], frame["elapsed"]) if view.get("available") else None
         return {"index": index, "squads": timeline["squads"], "checkpoints": selected, **frame}
+
+    def frame_at(self, game_id: int, t: int) -> dict | None:
+        """The frame at replay second ``t``, or the latest one before it."""
+        timeline = self.timeline(game_id)
+        if timeline is None or not timeline["frames"]:
+            return None
+        index = bisect.bisect_right([frame["t"] for frame in timeline["frames"]], t) - 1
+        return self.frame(game_id, max(index, 0)) | {"requested_t": t}
 
     def curve_points(self, game_id: int) -> dict:
         return self.curve(game_id)

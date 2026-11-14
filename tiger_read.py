@@ -33,7 +33,7 @@ ORDER BY m.match_start NULLS LAST, m.game_id
 MATCH = """
 SELECT game_id, session_id, event, map_name, quality_score, organizer_username,
        match_start, replay_match_start, playing_start_s, evaluation_split,
-       winner_team_id, winner_team_name, winner_label_source
+       winner_team_id, winner_team_name, winner_label_source, conclusion_t
 FROM matches WHERE game_id = %s
 """
 
@@ -151,7 +151,7 @@ class TigerReader:
             return None
         keys = ("game_id", "session_id", "event", "map_name", "quality_score", "organizer_username",
                 "match_start", "replay_match_start", "playing_start_s", "evaluation_split",
-                "winner_team_id", "winner_team_name", "winner_label_source")
+                "winner_team_id", "winner_team_name", "winner_label_source", "conclusion_t")
         return dict(zip(keys, row))
 
     def list_squads(self, game_id: int) -> list[dict]:

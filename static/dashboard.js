@@ -8,6 +8,7 @@ const roster = document.querySelector("#roster");
 const curveBox = document.querySelector("#curve");
 const heldoutBox = document.querySelector("#heldout");
 const evalBox = document.querySelector("#evaluation");
+const outcome = document.querySelector("#outcome");
 const canvas = document.querySelector("#plot");
 const ctx = canvas.getContext("2d");
 
@@ -37,6 +38,13 @@ function textOrUnknown(value) {
 
 function pct(value) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+// Throws on an HTTP error, so an error page is never parsed as data.
+async function getJSON(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  return response.json();
 }
 
 async function loadBackend() {
@@ -69,11 +77,38 @@ async function loadMatches() {
   }
 }
 
+// The slider value is seconds since Playing start. The requested replay
+// second is playing start + that value; it is never a frame-array index.
+// Every seek and match selection takes a new token; a response that comes
+// back after a newer one started is dropped.
+function replayStart() {
+  return summary.playing_start ?? summary.first_t ?? 0;
+}
+
 async function loadMatch(gameId) {
-  summary = await (await fetch(`/api/matches/${gameId}`)).json();
-  curve = await (await fetch(`/api/matches/${gameId}/curve`)).json();
-  heldout = await (await fetch(`/api/matches/${gameId}/heldout`)).json();
-  const evaluation = await (await fetch("/api/evaluation")).json();
+  const token = ++requestToken;
+  timeInput.disabled = true;
+  let nextSummary, nextCurve, nextHeldout, evaluation;
+  try {
+    [nextSummary, nextCurve, nextHeldout, evaluation] = await Promise.all([
+      getJSON(`/api/matches/${gameId}`),
+      getJSON(`/api/matches/${gameId}/curve`),
+      getJSON(`/api/matches/${gameId}/heldout`),
+      getJSON("/api/evaluation"),
+    ]);
+  } catch (error) {
+    if (token !== requestToken) return;
+    meta.textContent = `Match ${gameId} could not be loaded.`;
+    console.error(error);
+    return;
+  }
+  const map = await getJSON(`/api/map-config?map=${encodeURIComponent(nextSummary.map_name || "")}`)
+    .catch(() => ({ supported: false, message: "Map background unavailable: map configuration could not be loaded." }));
+  if (token !== requestToken) return;
+  summary = nextSummary;
+  curve = nextCurve;
+  heldout = nextHeldout;
+  mapConfig = map;
   meta.textContent = [
     summary.event,
     summary.map_name,
@@ -81,10 +116,9 @@ async function loadMatch(gameId) {
     `session ${summary.session_id}`,
     summary.winner && summary.winner.teamName ? `verified winner ${summary.winner.teamName}` : "winner unknown",
   ].filter(Boolean).join(" · ");
-  mapConfig = await (await fetch(`/api/map-config?map=${encodeURIComponent(summary.map_name || "")}`)).json();
-  note.textContent = mapConfig.supported
+  note.textContent = mapConfig && mapConfig.supported
     ? "Positions use the Overstat mapCord transform on the matching 2048 map. z is omitted. Only the current ring is shown."
-    : mapConfig.message;
+    : (mapConfig && mapConfig.message) || "Map background unavailable.";
   squadSelect.innerHTML = "";
   for (const squad of summary.squads) {
     const option = document.createElement("option");
@@ -95,24 +129,63 @@ async function loadMatch(gameId) {
   if (summary.winner && summary.squads.some((squad) => String(squad.teamId) === String(summary.winner.teamId))) {
     squadSelect.value = String(summary.winner.teamId);
   }
-  timeInput.max = String(Math.max(0, summary.frame_count - 1));
+  // Bounds are set once per match, from its first and last stored replay second.
+  timeInput.min = "0";
+  timeInput.max = String(Math.max(0, (summary.last_t ?? replayStart()) - replayStart()));
   timeInput.value = "0";
+  timeInput.disabled = false;
   frame = null;
+  currentRing = null;
   renderEvaluation(evaluation);
   await loadFrame(0);
 }
 
-async function loadFrame(index) {
+async function loadFrame(elapsed) {
   const token = ++requestToken;
-  const next = await (await fetch(`/api/matches/${summary.game_id}/frames/${index}`)).json();
+  const game = summary.game_id;
+  const t = replayStart() + elapsed;
+  let next;
+  let ring;
+  try {
+    [next, ring] = await Promise.all([
+      getJSON(`/api/matches/${game}/at/${t}`),
+      getJSON(`/api/matches/${game}/ring?t=${t}`).catch(() => ({ state: "unavailable" })),
+    ]);
+    if (token === requestToken && next.t !== t) {
+      ring = await getJSON(`/api/matches/${game}/ring?t=${next.t}`).catch(() => ({ state: "unavailable" }));
+    }
+  } catch (error) {
+    if (token !== requestToken) return;
+    clock.textContent = `${mmss(elapsed)} · frame unavailable`;
+    console.error(error);
+    return;
+  }
   if (token !== requestToken) return;
   frame = next;
-  currentRing = await (await fetch(`/api/matches/${summary.game_id}/ring?t=${frame.t}`)).json();
-  if (token !== requestToken) return;
+  currentRing = ring;
   clock.textContent = mmss(frame.elapsed);
+  renderOutcome();
   draw();
   renderRoster();
   renderPredictions();
+}
+
+// A recorded result from the replay, not a model output.
+function renderOutcome() {
+  const last = summary.last_t ?? frame.t;
+  const winner = summary.winner && summary.winner.teamName;
+  if (frame.finished) {
+    outcome.hidden = false;
+    outcome.className = "outcome";
+    outcome.innerHTML = `<strong>Match finished</strong> at ${mmss(summary.conclusion_elapsed)} (replay t ${summary.conclusion_t}). ` +
+      `Verified winner: <strong>${winner ? esc(winner) : "unknown"}</strong>. This is the recorded result, not a model prediction.`;
+  } else if (summary.conclusion_t == null && frame.t >= last) {
+    outcome.hidden = false;
+    outcome.className = "outcome cut";
+    outcome.textContent = "Replay ends before match conclusion. No frames after this one are recorded.";
+  } else {
+    outcome.hidden = true;
+  }
 }
 
 function selectedTeam() {
@@ -174,7 +247,8 @@ function predictionPanel(view, selection, label) {
   const team = selectedTeam();
   const age = selection.age_s;
   const when = `Prediction time ${mmss(point.elapsed)} (replay t ${point.t}${point.replay_time_utc ? `, ${esc(point.replay_time_utc)}` : ""}).` +
-    (age > 0 ? ` Slider time is ${mmss(point.elapsed + age)}, ${age}s later; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : " Slider is on this checkpoint.");
+    (age > 0 ? ` Slider time is ${mmss(point.elapsed + age)}, ${age}s later` : " Slider is on this checkpoint.") +
+    (age > 0 && frame && frame.finished ? "; no prediction is made after the result." : age > 0 ? `; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : "");
   const asOf = `Probabilities and eliminations are as of the prediction time ${mmss(point.elapsed)}; the map and roster show the slider time.`;
   const eligibilityLine = point.eligibility === "unverified"
     ? `<p class="unavailable">Eligibility unverified at this checkpoint${(point.eligibility_reasons || []).length ? ` (${esc(point.eligibility_reasons.join(", "))})` : ""}: no squad is excluded and probabilities are unconstrained.</p>`
@@ -196,7 +270,8 @@ function predictionPanel(view, selection, label) {
     <p class="when">${when}</p>
     <p class="when">${asOf}</p>
     ${eligibilityLine}
-    <p class="when">${point.in_contention} squads in contention. Baseline: ${baselineName}.</p>
+    ${frame && frame.finished ? `<p class="when">The match has finished at the slider time. This prediction is from ${mmss(point.elapsed)}, before the result, and the squad counts below are as of then.</p>` : ""}
+    <p class="when">${point.in_contention} squads in contention at ${mmss(point.elapsed)}. Baseline: ${baselineName}.</p>
     <table class="probs"><thead><tr><th>Squad</th><th class="num">Model (constrained)</th><th class="num">Baseline</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="history"><strong>Selected squad, checkpoints up to now</strong>${history || "<div>No prediction for this squad.</div>"}</div>`;
 }
@@ -250,7 +325,7 @@ function renderEvaluation(evaluation) {
 
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => { draw(); renderRoster(); renderPredictions(); });
+squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); });
 timeInput.addEventListener("input", () => loadFrame(Number(timeInput.value)));
 loadBackend();
 loadMatches();

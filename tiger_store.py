@@ -19,6 +19,7 @@ from dashboard_data import (
     _unavailable,
     checkpoint_at,
     constrained_metrics,
+    replay_range,
 )
 from train_model import score
 
@@ -53,6 +54,7 @@ class TigerStore:
         self._times: dict[Any, list[dict]] = {}
         self._views: dict[tuple, dict] = {}
         self._squads: dict[Any, list[dict]] = {}
+        self._conclusions: dict[Any, int | None] = {}
 
     # --- shared pieces -------------------------------------------------------
 
@@ -230,6 +232,7 @@ class TigerStore:
             "playing_start": match["playing_start_s"],
             "frame_count": len(times),
             "times": times,
+            **replay_range(times, match["playing_start_s"], match.get("conclusion_t")),
             "squads": self._squad_list(game_id),
             "coordinate_note": COORDINATE_NOTE,
             "heldout": self._header(self.heldout(game_id)),
@@ -241,7 +244,17 @@ class TigerStore:
         if not times:
             return None
         index = max(0, min(index, len(times) - 1))
-        stored = self.reader.frame_at_or_before(game_id, times[index]["t"])
+        frame = self.frame_at(game_id, times[index]["t"])
+        if frame is not None:
+            frame.pop("requested_t")
+        return frame
+
+    def frame_at(self, game_id: int, t: int) -> dict | None:
+        """The frame at replay second ``t``, or the latest one before it."""
+        times = self._frame_times(game_id)
+        if not times:
+            return None
+        stored = self.reader.frame_at_or_before(game_id, max(t, times[0]["t"]))
         if stored is None:
             return None
         names = {squad["teamId"]: squad["teamName"] for squad in self._squad_list(game_id)}
@@ -265,13 +278,18 @@ class TigerStore:
         selected = {}
         for name, view in (("heldout", self.heldout(game_id)), ("final", self.curve(game_id))):
             selected[name] = checkpoint_at(view.get("points") or [], elapsed) if view.get("available") else None
+        if game_id not in self._conclusions:
+            self._conclusions[game_id] = (self.reader.match(game_id) or {}).get("conclusion_t")
+        conclusion_t = self._conclusions[game_id]
         return {
-            "index": index,
+            "index": next((i for i, row in enumerate(times) if row["t"] == stored["t"]), None),
             "squads": self._squad_list(game_id),
             "checkpoints": selected,
             "t": stored["t"],
             "elapsed": elapsed,
+            "finished": conclusion_t is not None and stored["t"] >= conclusion_t,
             "players": players,
+            "requested_t": t,
         }
 
     def curve_points(self, game_id: int) -> dict:

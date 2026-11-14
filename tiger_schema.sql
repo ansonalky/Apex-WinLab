@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS matches (
   winner_label_source  text
 );
 
+-- Replay second of the first WinnerDetermined state; null if the replay ends before it.
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS conclusion_t integer;
+
 CREATE TABLE IF NOT EXISTS squads (
   game_id    integer NOT NULL REFERENCES matches (game_id),
   team_id    integer NOT NULL,

@@ -10,9 +10,9 @@ Ingestion is `tiger_schema.sql`, `tiger_rows.py`, and `import_tiger.py`. The das
 
 | Table | Rows |
 | --- | --- |
-| `matches` | 51 (test 6, train 36, validation 9) |
+| `matches` | 51 (test 6, train 36, validation 9). `conclusion_t` is the first `WinnerDetermined` second, recorded for all 51 |
 | `squads` | 936 |
-| `player_frames` | 3,223,508 |
+| `player_frames` | 3,312,521 (Playing start to the end of the telemetry, including the frames after `WinnerDetermined`) |
 | `squad_estimates` | 41,670: `final_model_fitted` 37,544 (51 games), `held_out` 4,126 (6 games) |
 | `evaluation_reports` | 1 |
 

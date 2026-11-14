@@ -124,11 +124,26 @@ def current_ring(rings: list[dict], t: int) -> dict:
     """Replay currentRingClosing / nextRing / currentRingLocation at clock t.
 
     Only the current circle is returned. Future stage centers are not included.
+    A stage the replay ends inside has no ``end`` or ``endCenter``. While it
+    closes, no circle is returned: its size and center are not recorded.
     """
     ordered = sorted(rings, key=lambda ring: (ring.get("start") or 0, ring.get("stage") or 0))
-    closing = next((ring for ring in ordered if ring["start"] < t and ring["end"] >= t), None)
+    unfinished = next(
+        (ring for ring in ordered if ring.get("start") is not None and ring["start"] < t
+         and (ring.get("end") is None or ring.get("endCenter") is None)),
+        None,
+    )
+    if unfinished is not None:
+        return {
+            "state": "closing_unrecorded",
+            "stage": unfinished.get("stage"),
+            "countdown_s": None,
+            "location": None,
+            "show_future": False,
+        }
+    closing = next((ring for ring in ordered if ring["start"] < t and ring.get("end") is not None and ring["end"] >= t), None)
     nxt = next((ring for ring in ordered if ring["start"] > t), None)
-    stage = next((ring for ring in ordered if ring["end"] > t), ordered[-1] if ordered else None)
+    stage = next((ring for ring in ordered if ring.get("end") is None or ring["end"] > t), ordered[-1] if ordered else None)
     if closing is None:
         if nxt is not None:
             location = {
@@ -190,21 +205,11 @@ def public_config(map_id: str) -> dict:
 
 
 def load_rings(data_dir: Path, game_id: int) -> list[dict]:
-    manifest = json.loads((data_dir / "collection" / "manifest.json").read_text(encoding="utf-8"))
-    record = next(
-        (
-            row
-            for row in (manifest.get("games") or {}).values()
-            if isinstance(row, dict) and row.get("game_id") == game_id
-        ),
-        None,
-    )
-    if record is None or not record.get("download_path"):
-        return []
-    path = Path(record["download_path"])
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    if not path.is_file():
+    from dashboard_data import _raw_path, _record
+
+    record = _record(data_dir, game_id)
+    path = _raw_path(record, data_dir) if record else None
+    if path is None:
         return []
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     rings = (payload.get("match") or {}).get("rings") or []
