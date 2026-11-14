@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apex WinLab</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header>
+    <h1>Apex WinLab</h1>
+    <p class="lede">One accepted match at a time. Positions use unverified game coordinates.</p>
+  </header>
+  <section class="controls">
+    <label>Match
+      <select id="match"></select>
+    </label>
+    <label>Squad
+      <select id="squad"></select>
+    </label>
+    <label class="slider">Time since Playing started
+      <input id="time" type="range" min="0" max="0" value="0" step="1">
+      <span id="clock">00:00</span>
+    </label>
+  </section>
+  <p id="match-meta" class="meta"></p>
+  <p id="coord-note" class="note"></p>
+  <div class="layout">
+    <canvas id="plot" width="720" height="720" aria-label="Player positions"></canvas>
+    <div>
+      <h2>Selected squad</h2>
+      <div id="roster"></div>
+      <h2>Win probability</h2>
+      <div id="curve" class="panel"></div>
+      <h2>Held-out evaluation</h2>
+      <div id="evaluation" class="panel"></div>
+    </div>
+  </div>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
