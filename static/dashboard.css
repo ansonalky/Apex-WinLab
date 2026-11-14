@@ -1,0 +1,27 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", sans-serif;
+  background: #121418;
+  color: #e7e9ee;
+}
+body { margin: 0; padding: 1.25rem 1.5rem 2rem; }
+h1 { margin: 0; font-size: 1.4rem; }
+h2 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+.lede, .note, .meta { color: #b7beca; max-width: 70rem; }
+.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-top: 1rem; }
+label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
+select, input[type="range"] { min-width: 16rem; }
+.slider { min-width: 22rem; }
+.layout { display: grid; grid-template-columns: minmax(280px, 720px) minmax(260px, 1fr); gap: 1.25rem; align-items: start; }
+canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c3340; border-radius: 8px; }
+.panel, .player { background: #1b1f27; border: 1px solid #2c3340; border-radius: 8px; padding: 0.75rem; }
+.player { margin-bottom: 0.45rem; }
+.player header { display: flex; justify-content: space-between; gap: 0.5rem; }
+.bar { height: 0.45rem; background: #2c3340; border-radius: 99px; overflow: hidden; margin-top: 0.25rem; }
+.bar > span { display: block; height: 100%; }
+.hp > span { background: #e15759; }
+.sh > span { background: #4e79a7; }
+.unavailable { color: #f0c674; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
