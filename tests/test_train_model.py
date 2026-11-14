@@ -216,3 +216,39 @@ class SplitTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContentionBaselineTest(unittest.TestCase):
+    def _group(self, verified, eliminated):
+        g = group(1, 0, [{}, {}, {}, {}])
+        g["elimination_verified"] = verified
+        for row, flag in zip(g["rows"], eliminated):
+            row["eliminated"] = flag
+        return g
+
+    def test_eliminated_squads_get_zero_only_when_verified(self):
+        flags = [False, True, False, True]
+        self.assertEqual(train_model.contention_baseline(self._group(True, flags)), [0.5, 0.0, 0.5, 0.0])
+        self.assertEqual(train_model.contention_baseline(self._group(False, flags)), [0.25] * 4)
+        self.assertEqual(train_model.masked([0.4, 0.4, 0.1, 0.1], self._group(True, flags)), [0.8, 0.0, 0.2, 0.0])
+
+    def test_candidate_summary_separates_no_standing_from_elimination(self):
+        g = self._group(True, [False, True, False, False])
+        g["rows"][1]["features"]["no_standing"] = 1.0
+        g["rows"][2]["features"]["no_standing"] = 1.0
+        g["teams_alive"] = 3
+        summary = train_model.candidate_summary([g])
+        self.assertEqual(summary["in_contention"], {"3": 1})
+        self.assertEqual(summary["in_contention_equals_teams_alive"], 1)
+        self.assertEqual(summary["status_vs_elimination_rows"]["no_standing_eliminated"], 1)
+        self.assertEqual(summary["status_vs_elimination_rows"]["no_standing_not_eliminated"], 1)
+
+
+class FeatureSubsetTest(unittest.TestCase):
+    def test_condition_only_fit_uses_only_condition_features(self):
+        model = train_model.fit(simulated(1.0, 40), features=train_model.CONDITION_FEATURES)
+        self.assertEqual(model["features"], list(train_model.CONDITION_FEATURES))
+        self.assertEqual(list(model["scaler"]), list(train_model.CONDITION_FEATURES))
+        self.assertEqual(len(train_model.predict(model, simulated(1.0, 1)[0])), 4)
+        self.assertTrue(set(train_model.POSITION_FEATURES).isdisjoint(train_model.CONDITION_FEATURES))
+        self.assertEqual(set(train_model.POSITION_FEATURES) | set(train_model.CONDITION_FEATURES), set(FEATURES))

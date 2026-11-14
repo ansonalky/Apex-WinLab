@@ -59,10 +59,23 @@ def _now() -> str:
 # --- preprocessing ---------------------------------------------------------
 
 
-def fit_scaler(groups: list[dict]) -> dict:
+CONDITION_FEATURES = (
+    "players_alive",
+    "players_downed",
+    "players_out",
+    "players_status_unknown",
+    "no_standing",
+    "hp_frac",
+    "hp_frac_missing",
+)
+POSITION_FEATURES = tuple(name for name in FEATURES if name not in CONDITION_FEATURES)
+FEATURE_SETS = {"condition_plus_position": FEATURES, "condition_only": CONDITION_FEATURES}
+
+
+def fit_scaler(groups: list[dict], names=FEATURES) -> dict:
     """Mean and standard deviation of each known feature value in ``groups``."""
     scaler = {}
-    for name in FEATURES:
+    for name in names:
         values = [
             row["features"][name]
             for group in groups
@@ -77,11 +90,11 @@ def fit_scaler(groups: list[dict]) -> dict:
 
 
 def vectorize(row: dict, scaler: dict) -> list[float]:
-    """Standardized features. An unknown value becomes the training mean (0)."""
+    """Standardized features, in ``scaler`` order. Unknown becomes the training mean (0)."""
     return [
         0.0 if row["features"][name] is None
         else (row["features"][name] - scaler[name]["mean"]) / scaler[name]["std"]
-        for name in FEATURES
+        for name in scaler
     ]
 
 
@@ -148,14 +161,20 @@ def _solve(matrix: list[list[float]], rhs: list[float]) -> list[float]:
     return x
 
 
-def fit(groups: list[dict], l2: float = DEFAULT_L2, tol: float = TOL, max_iter: int = MAX_ITER) -> dict:
+def fit(
+    groups: list[dict],
+    l2: float = DEFAULT_L2,
+    tol: float = TOL,
+    max_iter: int = MAX_ITER,
+    features=FEATURES,
+) -> dict:
     """Newton's method with Armijo backtracking. Scaler is fit on ``groups`` only."""
     if l2 <= 0:
         raise ValueError("l2 must be positive so the objective is strictly convex")
-    scaler = fit_scaler(groups)
+    scaler = fit_scaler(groups, features)
     data = [([vectorize(row, scaler) for row in group["rows"]], group["label"]) for group in groups]
     weights = game_weights(groups)
-    beta = [0.0] * len(FEATURES)
+    beta = [0.0] * len(features)
     history = []
     converged = False
     for iteration in range(max_iter + 1):
@@ -177,7 +196,7 @@ def fit(groups: list[dict], l2: float = DEFAULT_L2, tol: float = TOL, max_iter: 
             size *= 0.5
         beta = trial
     return {
-        "features": list(FEATURES),
+        "features": list(features),
         "weights": beta,
         "scaler": scaler,
         "l2": l2,
@@ -194,6 +213,7 @@ def fit(groups: list[dict], l2: float = DEFAULT_L2, tol: float = TOL, max_iter: 
 
 
 def predict(model: dict, group: dict) -> list[float]:
+    # ``vectorize`` follows the model's own scaler, so feature subsets work.
     vectors = [vectorize(row, model["scaler"]) for row in group["rows"]]
     return softmax([_dot(model["weights"], vector) for vector in vectors])
 
@@ -202,7 +222,29 @@ def predict(model: dict, group: dict) -> list[float]:
 
 
 def uniform_baseline(group: dict) -> list[float]:
+    """Equal probability for every squad in the lobby, eliminated or not."""
     return [1.0 / len(group["rows"])] * len(group["rows"])
+
+
+def contending(group: dict) -> list[bool]:
+    """Squads not verified eliminated. Unverified groups keep every squad."""
+    if not group.get("elimination_verified"):
+        return [True] * len(group["rows"])
+    return [not row.get("eliminated") for row in group["rows"]]
+
+
+def contention_baseline(group: dict) -> list[float]:
+    """Equal probability over squads in contention; verified-eliminated squads get 0."""
+    alive = contending(group)
+    return [1.0 / sum(alive) if flag else 0.0 for flag in alive]
+
+
+def masked(probs: list[float], group: dict) -> list[float]:
+    """Model probabilities renormalized over squads in contention (diagnostic)."""
+    alive = contending(group)
+    kept = [p if flag else 0.0 for p, flag in zip(probs, alive)]
+    total = sum(kept)
+    return [p / total for p in kept]
 
 
 def players_baseline(group: dict) -> list[float]:
@@ -216,7 +258,13 @@ def players_baseline(group: dict) -> list[float]:
     return [1.0 / tied if count == best else 0.0 for count in counts]
 
 
-METHODS = {"model": None, "uniform": uniform_baseline, "most_players": players_baseline}
+METHODS = {
+    "model": None,
+    "model_masked_diagnostic": None,
+    "uniform": uniform_baseline,
+    "uniform_contention": contention_baseline,
+    "most_players": players_baseline,
+}
 
 
 def score(probs: list[float], label: int) -> dict:
@@ -305,6 +353,7 @@ def score_groups(model: dict, groups: list[dict]) -> list[dict]:
             "label": group["label"],
             "probs": probs,
             "model": score(probs, group["label"]),
+            "model_masked_diagnostic": score(masked(probs, group), group["label"]),
         }
         for name, baseline in METHODS.items():
             if baseline:
@@ -352,20 +401,21 @@ def _non_converged(models: list[dict]) -> list[dict]:
     return [m["optimizer"] for m in models if not m["optimizer"]["converged"]]
 
 
-def evaluate_by_session(groups: list[dict], split: dict) -> dict:
+def evaluate_by_session(groups: list[dict], split: dict, features=FEATURES) -> dict:
     part = {name: [g for g in groups if g["session_id"] in members] for name, members in split.items()}
     fits = []
     selection = []
     for l2 in L2_GRID:
-        model = fit(part["train"], l2=l2)
+        model = fit(part["train"], l2=l2, features=features)
         fits.append(model)
         val = summarize(score_groups(model, part["validation"]))
         selection.append({"l2": l2, "validation_log_loss": val["game_weighted"]["model"]["log_loss"]})
     chosen = min(selection, key=lambda item: item["validation_log_loss"])["l2"]
-    final = fit(part["train"] + part["validation"], l2=chosen)
+    final = fit(part["train"] + part["validation"], l2=chosen, features=features)
     fits.append(final)
     result = {
         "method": "session_split",
+        "features": list(features),
         "sessions": split,
         "games": {name: len({g["game_id"] for g in items}) for name, items in part.items()},
         "l2_selection": selection,
@@ -407,6 +457,48 @@ def leave_one_game_out(groups: list[dict], l2: float = DEFAULT_L2) -> dict:
     result["test"] = evaluation_report(scored)
     result["status"] = "ok"
     return result
+
+
+# --- candidate audit -------------------------------------------------------
+
+
+def _distribution(values: list[int]) -> dict:
+    counts: dict = {}
+    for value in values:
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: int(kv[0])))
+
+
+def candidate_summary(groups: list[dict]) -> dict:
+    """What the uniform baselines divide by, and how status relates to elimination."""
+    verified = [g for g in groups if g.get("elimination_verified")]
+    cross = {
+        f"{standing}_{state}": 0
+        for standing in ("no_standing", "standing")
+        for state in ("eliminated", "not_eliminated")
+    }
+    for group in verified:
+        for row in group["rows"]:
+            standing = "no_standing" if row["features"]["no_standing"] else "standing"
+            state = "eliminated" if row.get("eliminated") else "not_eliminated"
+            cross[f"{standing}_{state}"] += 1
+    contending_counts = [sum(contending(g)) for g in groups]
+    return {
+        "groups": len(groups),
+        "lobby_size": _distribution([len(g["rows"]) for g in groups]),
+        "lobby_size_games": _distribution(
+            [len(g["rows"]) for g in {g["game_id"]: g for g in groups}.values()]
+        ),
+        "elimination_verified_groups": len(verified),
+        "elimination_unverified_groups": len(groups) - len(verified),
+        "in_contention": _distribution(contending_counts),
+        "mean_lobby_size": sum(len(g["rows"]) for g in groups) / len(groups),
+        "mean_in_contention": sum(contending_counts) / len(groups),
+        "in_contention_equals_teams_alive": sum(
+            1 for g, n in zip(groups, contending_counts) if g.get("elimination_verified") and n == g.get("teams_alive")
+        ),
+        "status_vs_elimination_rows": cross,
+    }
 
 
 # --- driver ----------------------------------------------------------------
@@ -456,12 +548,22 @@ def run(data_dir: Path, out_dir: Path, min_games: int, step: int = CHECKPOINT_ST
         report["detail"] = f"{len(games)} games produced labeled groups; {min_games} required"
         return report
 
+    report["candidates"] = candidate_summary(groups)
     split = session_split(groups, _session_order(records))
     evaluation = evaluate_by_session(groups, split) if split else leave_one_game_out(groups)
     report["evaluation"] = evaluation
     if evaluation["status"] != "ok":
         report["status"] = evaluation["status"]
         return report
+    if split:
+        # Same split and validation-based l2 selection; test is scored once.
+        ablation = evaluate_by_session(groups, split, features=CONDITION_FEATURES)
+        report["ablation"] = {
+            "question": "do position features add value beyond squad condition?",
+            "condition_only": ablation,
+            "condition_features": list(CONDITION_FEATURES),
+            "position_features": list(POSITION_FEATURES),
+        }
 
     final = fit(groups, l2=evaluation["l2"])
     if not final["optimizer"]["converged"]:

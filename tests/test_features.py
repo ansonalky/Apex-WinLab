@@ -307,3 +307,54 @@ class LoadAcceptedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def eliminated_event(team, size=2):
+    return {"type": "eliminated", "timestamp": "0", "team": [{"teamId": team, "name": f"p{team}{i}"} for i in range(size)]}
+
+
+class EliminationTest(unittest.TestCase):
+    def test_event_names_one_squad_or_is_a_problem(self):
+        from features import elimination_team
+
+        self.assertEqual(elimination_team(eliminated_event(4)), (4, None))
+        mixed = {"type": "eliminated", "team": [{"teamId": 4}, {"teamId": 5}]}
+        self.assertEqual(elimination_team(mixed), (None, "ambiguous_team"))
+        self.assertEqual(elimination_team({"type": "kill"}), (None, None))
+
+    def _game(self, teams_alive_after=2):
+        payload = synthetic_game(winner=1, teams=3, out_at=50, decided_at=100)
+        for entry in payload["series"]:
+            if entry["t"] == 0:
+                entry["d"]["totalTeams"] = [3]
+            if entry["t"] == 50:
+                entry["f"] = [eliminated_event(2)]
+                entry["d"]["teamsAlive"] = [3, teams_alive_after]
+            if entry["t"] == 100:
+                entry["d"]["teamsAlive"] = [teams_alive_after, 1]
+        return payload
+
+    def test_verified_elimination_marks_only_events_seen_by_t(self):
+        game = game_examples(self._game(), record(1), standings(1))
+        by_t = {g["t"]: g for g in game["groups"]}
+        self.assertTrue(all(g["elimination_verified"] for g in game["groups"]))
+        self.assertEqual([r["eliminated"] for r in by_t[40]["rows"]], [False, False, False])
+        self.assertEqual([r["eliminated"] for r in by_t[70]["rows"]], [False, True, False])
+        # Squad 3 shows no standing player at 70 but has no elimination event.
+        self.assertEqual(by_t[70]["rows"][2]["features"]["no_standing"], 1.0)
+        self.assertFalse(by_t[70]["rows"][2]["eliminated"])
+
+    def test_disagreement_with_teams_alive_leaves_the_group_unverified(self):
+        game = game_examples(self._game(teams_alive_after=3), record(1), standings(1))
+        group = [g for g in game["groups"] if g["t"] == 70][0]
+        self.assertFalse(group["elimination_verified"])
+        self.assertEqual([r["eliminated"] for r in group["rows"]], [False, False, False])
+        self.assertIn("teamsAlive_disagrees", game["diagnostics"]["elimination_unverified"][0]["reasons"])
+
+    def test_winner_marked_eliminated_is_unverified(self):
+        from features import contention
+
+        meta = {"eliminated": [1], "elimination_problems": 0, "totalTeams": 3, "teamsAlive": 2}
+        status = contention(meta, [1, 2, 3], winner=1)
+        self.assertFalse(status["verified"])
+        self.assertIn("winner_marked_eliminated", status["reasons"])
