@@ -8,7 +8,11 @@ not change. Held-out and final-model predictions come from separate
 
 from __future__ import annotations
 
+import bisect
 import json
+import threading
+import time
+from collections import OrderedDict
 from datetime import timezone
 from typing import Any
 
@@ -22,6 +26,9 @@ from dashboard_data import (
     replay_range,
 )
 from train_model import score
+
+# Selected matches whose frames are held in memory after one Tiger query.
+FRAME_CACHE_GAMES = 3
 
 # Per-game metrics, recomputed from stored rows the way export_heldout does:
 # the mean of train_model.score over the game's checkpoints.
@@ -55,6 +62,10 @@ class TigerStore:
         self._views: dict[tuple, dict] = {}
         self._squads: dict[Any, list[dict]] = {}
         self._conclusions: dict[Any, int | None] = {}
+        # game_id -> {"t": [...], "frames": [...], "loaded_at": str} once loaded.
+        self._frame_cache: OrderedDict = OrderedDict()
+        self._loading: set = set()
+        self._cache_lock = threading.Lock()
 
     # --- shared pieces -------------------------------------------------------
 
@@ -217,6 +228,7 @@ class TigerStore:
         if match is None:
             return None
         times = self._frame_times(game_id)
+        self.warm(game_id)
         return {
             "game_id": game_id,
             "session_id": match["session_id"],
@@ -249,12 +261,55 @@ class TigerStore:
             frame.pop("requested_t")
         return frame
 
+    def warm(self, game_id: int) -> None:
+        """Start loading a match's frames from Tiger Data in the background."""
+        with self._cache_lock:
+            if game_id in self._frame_cache or game_id in self._loading:
+                return
+            self._loading.add(game_id)
+
+        def load():
+            try:
+                started = time.perf_counter()
+                frames = self.reader.game_frames(game_id)
+                entry = {
+                    "t": [frame["t"] for frame in frames],
+                    "frames": frames,
+                    "loaded_at": time.strftime("%H:%M:%S"),
+                    "load_ms": round((time.perf_counter() - started) * 1000),
+                    "rows": sum(len(frame["players"]) for frame in frames),
+                }
+                with self._cache_lock:
+                    self._frame_cache[game_id] = entry
+                    while len(self._frame_cache) > FRAME_CACHE_GAMES:
+                        self._frame_cache.popitem(last=False)
+            finally:
+                with self._cache_lock:
+                    self._loading.discard(game_id)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _stored_at(self, game_id: int, t: int) -> tuple[dict | None, dict]:
+        """The stored second at or before t: from the selected-match cache when
+        it is loaded, else one Tiger query. Says which."""
+        with self._cache_lock:
+            entry = self._frame_cache.get(game_id)
+            if entry is not None:
+                self._frame_cache.move_to_end(game_id)
+        if entry is not None:
+            index = bisect.bisect_right(entry["t"], t) - 1
+            read = {"source": "tiger", "via": "selected-match cache",
+                    "detail": f"{entry['rows']} rows read in one query at {entry['loaded_at']} ({entry['load_ms']} ms)"}
+            return (entry["frames"][max(index, 0)] if entry["frames"] else None), read
+        self.warm(game_id)
+        return self.reader.frame_at_or_before(game_id, t), {"source": "tiger", "via": "query", "detail": "one query for this second"}
+
     def frame_at(self, game_id: int, t: int) -> dict | None:
         """The frame at replay second ``t``, or the latest one before it."""
         times = self._frame_times(game_id)
         if not times:
             return None
-        stored = self.reader.frame_at_or_before(game_id, max(t, times[0]["t"]))
+        stored, read = self._stored_at(game_id, max(t, times[0]["t"]))
         if stored is None:
             return None
         names = {squad["teamId"]: squad["teamName"] for squad in self._squad_list(game_id)}
@@ -290,6 +345,7 @@ class TigerStore:
             "finished": conclusion_t is not None and stored["t"] >= conclusion_t,
             "players": players,
             "requested_t": t,
+            "read": read,
         }
 
     def curve_points(self, game_id: int) -> dict:

@@ -687,7 +687,10 @@ class MatchStore:
         if timeline is None or not timeline["frames"]:
             return None
         index = bisect.bisect_right([frame["t"] for frame in timeline["frames"]], t) - 1
-        return self.frame(game_id, max(index, 0)) | {"requested_t": t}
+        return self.frame(game_id, max(index, 0)) | {
+            "requested_t": t,
+            "read": {"source": "files", "via": "timeline cache", "detail": "decoded local replay"},
+        }
 
     def curve_points(self, game_id: int) -> dict:
         return self.curve(game_id)

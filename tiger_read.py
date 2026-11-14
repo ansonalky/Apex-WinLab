@@ -48,17 +48,25 @@ FRAME_TIMES = """
 SELECT DISTINCT t, elapsed_s FROM player_frames WHERE game_id = %s ORDER BY t
 """
 
-FRAME_T = """
-SELECT max(t) FROM player_frames
-WHERE game_id = %s AND t <= %s
-"""
 
-FRAME_ROWS = """
+
+# One round trip: the latest stored second at or before t, and its rows.
+FRAME_AT_ROWS = """
 SELECT player_id, player_name, team_id, x, y,
        health, health_max, shields, shield_max, status, t, elapsed_s
 FROM player_frames
-WHERE game_id = %s AND t = %s
+WHERE game_id = %s
+  AND t = (SELECT max(t) FROM player_frames WHERE game_id = %s AND t <= %s)
 ORDER BY team_id, player_name
+"""
+
+# Every stored row of one match, for the selected-match cache.
+GAME_ROWS = """
+SELECT player_id, player_name, team_id, x, y,
+       health, health_max, shields, shield_max, status, t, elapsed_s
+FROM player_frames
+WHERE game_id = %s
+ORDER BY t, team_id, player_name
 """
 
 ESTIMATES = """
@@ -85,6 +93,28 @@ FROM evaluation_reports
 ORDER BY generated_at DESC NULLS LAST
 LIMIT 1
 """
+
+
+def _frame(rows: list) -> dict:
+    return {
+        "t": rows[0][10],
+        "elapsed_s": rows[0][11],
+        "players": [
+            {
+                "player_id": row[0],
+                "player_name": row[1],
+                "team_id": row[2],
+                "x": row[3],
+                "y": row[4],
+                "health": row[5],
+                "health_max": row[6],
+                "shields": row[7],
+                "shield_max": row[8],
+                "status": row[9],
+            }
+            for row in rows
+        ],
+    }
 
 
 class TigerReader:
@@ -166,29 +196,29 @@ class TigerReader:
 
     def frame_at_or_before(self, game_id: int, t: int) -> dict | None:
         with self._connection() as connection:
-            chosen = connection.execute(FRAME_T, (game_id, t)).fetchone()
-            if chosen is None or chosen[0] is None:
-                return None
-            rows = connection.execute(FRAME_ROWS, (game_id, chosen[0])).fetchall()
-        return {
-            "t": chosen[0],
-            "elapsed_s": rows[0][11] if rows else None,
-            "players": [
-                {
-                    "player_id": row[0],
-                    "player_name": row[1],
-                    "team_id": row[2],
-                    "x": row[3],
-                    "y": row[4],
-                    "health": row[5],
-                    "health_max": row[6],
-                    "shields": row[7],
-                    "shield_max": row[8],
-                    "status": row[9],
-                }
-                for row in rows
-            ],
-        }
+            rows = connection.execute(FRAME_AT_ROWS, (game_id, game_id, t)).fetchall()
+        if not rows:
+            return None
+        return _frame(rows)
+
+    def game_frames(self, game_id: int) -> list[dict]:
+        """Every stored second of one match, in order, from one query.
+
+        Uses its own connection so a long load does not hold up seeks.
+        """
+        import psycopg
+
+        with psycopg.connect(self._dsn, autocommit=True, connect_timeout=20) as connection:
+            rows = connection.execute(GAME_ROWS, (game_id,)).fetchall()
+        frames, current = [], []
+        for row in rows:
+            if current and row[10] != current[0][10]:
+                frames.append(_frame(current))
+                current = []
+            current.append(row)
+        if current:
+            frames.append(_frame(current))
+        return frames
 
     def estimates(self, game_id: int, prediction_kind: str) -> list[dict]:
         if prediction_kind not in KINDS:

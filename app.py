@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template
 
 from dashboard_data import MatchStore
-from map_api import map_bp
+from live_predictions import FINAL, HELD_OUT, LivePredictions
+from map_api import map_bp, ring_at
 
 
 def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[object, dict]:
@@ -70,6 +73,9 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     # The map and ring endpoints read local replay files under either backend.
     app.config["DATA_DIR"] = data_dir.resolve()
     app.register_blueprint(map_bp)
+    # Per-second predictions are computed from the local replay and the frozen
+    # model files under either backend, and cached in memory.
+    live = LivePredictions(data_dir.resolve())
 
     @app.get("/")
     def index():
@@ -88,6 +94,15 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         summary = store.summary(game_id)
         if summary is None:
             abort(404)
+        # Build this match's per-second predictions while the page loads.
+        threading.Thread(
+            target=lambda: [live.table(game_id, kind) for kind in (HELD_OUT, FINAL) if live.available(game_id, kind)],
+            daemon=True,
+        ).start()
+        summary["live"] = {
+            "heldout": live.model(HELD_OUT)["provenance"] if live.available(game_id, HELD_OUT) else None,
+            "final": live.model(FINAL)["provenance"] if live.available(game_id, FINAL) else None,
+        }
         return jsonify(summary)
 
     @app.get("/api/matches/<int:game_id>/frames/<int:index>")
@@ -99,10 +114,19 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
 
     @app.get("/api/matches/<int:game_id>/at/<int:t>")
     def match_frame_at(game_id: int, t: int):
+        """Everything shown for one second: frame, ring, and the predictions
+        made at that same second, so the page never mixes timestamps."""
+        started = time.perf_counter()
         frame = store.frame_at(game_id, t)
         if frame is None:
             abort(404)
-        return jsonify(frame)
+        frame_ms = (time.perf_counter() - started) * 1000
+        frame["ring"] = ring_at(game_id, frame["t"])
+        frame["live"] = {"heldout": live.at(game_id, frame["t"], HELD_OUT), "final": live.at(game_id, frame["t"], FINAL)}
+        total_ms = (time.perf_counter() - started) * 1000
+        response = jsonify(frame)
+        response.headers["Server-Timing"] = f"frame;dur={frame_ms:.1f}, total;dur={total_ms:.1f}"
+        return response
 
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):

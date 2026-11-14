@@ -2,6 +2,7 @@ const matchSelect = document.querySelector("#match");
 const squadSelect = document.querySelector("#squad");
 const timeInput = document.querySelector("#time");
 const clock = document.querySelector("#clock");
+const shown = document.querySelector("#shown");
 const meta = document.querySelector("#match-meta");
 const note = document.querySelector("#coord-note");
 const roster = document.querySelector("#roster");
@@ -19,6 +20,11 @@ let heldout = null;
 let mapConfig = null;
 let currentRing = null;
 let requestToken = 0;
+// At most one frame request runs at a time. Slider input that arrives while
+// it runs only replaces pendingSeek, so a fast scrub asks for its newest value
+// next and skips the ones in between.
+let inFlight = null;
+let pendingSeek = null;
 
 function mmss(seconds) {
   const whole = Math.max(0, Math.round(seconds));
@@ -41,8 +47,8 @@ function pct(value) {
 }
 
 // Throws on an HTTP error, so an error page is never parsed as data.
-async function getJSON(url) {
-  const response = await fetch(url);
+async function getJSON(url, options) {
+  const response = await fetch(url, options);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
   return response.json();
 }
@@ -87,6 +93,9 @@ function replayStart() {
 
 async function loadMatch(gameId) {
   const token = ++requestToken;
+  if (inFlight) inFlight.controller.abort();
+  inFlight = null;
+  pendingSeek = null;
   timeInput.disabled = true;
   let nextSummary, nextCurve, nextHeldout, evaluation;
   try {
@@ -137,37 +146,57 @@ async function loadMatch(gameId) {
   frame = null;
   currentRing = null;
   renderEvaluation(evaluation);
+  clock.textContent = mmss(0);
   await loadFrame(0);
 }
 
-async function loadFrame(elapsed) {
-  const token = ++requestToken;
-  const game = summary.game_id;
-  const t = replayStart() + elapsed;
-  let next;
-  let ring;
-  try {
-    [next, ring] = await Promise.all([
-      getJSON(`/api/matches/${game}/at/${t}`),
-      getJSON(`/api/matches/${game}/ring?t=${t}`).catch(() => ({ state: "unavailable" })),
-    ]);
-    if (token === requestToken && next.t !== t) {
-      ring = await getJSON(`/api/matches/${game}/ring?t=${next.t}`).catch(() => ({ state: "unavailable" }));
-    }
-  } catch (error) {
-    if (token !== requestToken) return;
-    clock.textContent = `${mmss(elapsed)} · frame unavailable`;
-    console.error(error);
+// The selected time shows at once; the displayed frame's own time is labeled
+// separately until the response for the selection arrives.
+function seek(elapsed) {
+  clock.textContent = mmss(elapsed);
+  shown.textContent = frame ? `loading · showing ${mmss(frame.elapsed)}` : "loading";
+  if (inFlight) {
+    pendingSeek = elapsed;
     return;
   }
+  loadFrame(elapsed);
+}
+
+// One request returns everything for one second: frame, ring and the
+// predictions made at that second, so they always share a timestamp.
+async function loadFrame(elapsed) {
+  const token = ++requestToken;
+  const controller = new AbortController();
+  inFlight = { token, controller };
+  const t = replayStart() + elapsed;
+  let next = null;
+  try {
+    next = await getJSON(`/api/matches/${summary.game_id}/at/${t}`, { signal: controller.signal });
+  } catch (error) {
+    if (error.name !== "AbortError" && token === requestToken) {
+      shown.textContent = `frame at ${mmss(elapsed)} unavailable`;
+      console.error(error);
+    }
+  } finally {
+    if (inFlight && inFlight.token === token) inFlight = null;
+  }
   if (token !== requestToken) return;
-  frame = next;
-  currentRing = ring;
-  clock.textContent = mmss(frame.elapsed);
-  renderOutcome();
-  draw();
-  renderRoster();
-  renderPredictions();
+  if (next) {
+    frame = next;
+    currentRing = next.ring || { state: "unavailable" };
+    renderOutcome();
+    draw();
+    renderRoster();
+    renderPredictions();
+  }
+  if (pendingSeek !== null) {
+    const latest = pendingSeek;
+    pendingSeek = null;
+    loadFrame(latest);
+    if (frame) shown.textContent = `loading · showing ${mmss(frame.elapsed)}`;
+  } else if (frame) {
+    shown.textContent = frame.elapsed === Number(timeInput.value) ? `showing ${mmss(frame.elapsed)}` : `showing ${mmss(frame.elapsed)} (latest stored second)`;
+  }
 }
 
 // A recorded result from the replay, not a model output.
@@ -234,64 +263,98 @@ function renderRoster() {
   `).join("");
 }
 
-// The server picks the checkpoint for the current second: the most recent one
-// at or before it (frame.checkpoints). The page never looks ahead or interpolates.
-function predictionPanel(view, selection, label) {
-  if (!view || !view.available) {
-    return `<p class="unavailable">Not available</p><p>${esc((view && (view.reason || view.limitation)) || "")}</p>`;
-  }
-  if (!selection) {
-    return `${label}<p class="unavailable">No prediction yet at this slider time.</p>`;
-  }
-  const point = view.points[selection.index];
+// Predictions are made at every replay second before the cut-off, at the same
+// second as the frame on screen (frame.live). Nothing is interpolated.
+function probabilityTable(squads, valueKey, valueLabel, baselineKey) {
   const team = selectedTeam();
-  const age = selection.age_s;
-  const when = `Prediction time ${mmss(point.elapsed)} (replay t ${point.t}${point.replay_time_utc ? `, ${esc(point.replay_time_utc)}` : ""}).` +
-    (age > 0 ? ` Slider time is ${mmss(point.elapsed + age)}, ${age}s later` : " Slider is on this checkpoint.") +
-    (age > 0 && frame && frame.finished ? "; no prediction is made after the result." : age > 0 ? `; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : "");
-  const asOf = `Probabilities and eliminations are as of the prediction time ${mmss(point.elapsed)}; the map and roster show the slider time.`;
-  const eligibilityLine = point.eligibility === "unverified"
-    ? `<p class="unavailable">Eligibility unverified at this checkpoint${(point.eligibility_reasons || []).length ? ` (${esc(point.eligibility_reasons.join(", "))})` : ""}: no squad is excluded and probabilities are unconstrained.</p>`
-    : `<p class="when">Eligibility verified: squads eliminated by ${mmss(point.elapsed)} have probability 0; the rest are renormalized.</p>`;
-  const baselineName = point.baseline === "uniform_lobby_fallback" || point.elimination_verified === false
-    ? "lobby uniform (elimination unverified)" : "contention uniform";
-  const rows = [...point.squads]
-    .sort((a, b) => b.model - a.model)
+  const rows = [...squads]
+    .sort((a, b) => b[valueKey] - a[valueKey])
     .map((squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
         <td>${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</td>
-        <td class="num">${pct(squad.model)}</td>
-        <td class="num">${pct(squad.uniform_contention)}</td>
+        <td class="num">${pct(squad[valueKey])}</td>
+        ${baselineKey ? `<td class="num">${pct(squad[baselineKey])}</td>` : ""}
       </tr>`).join("");
+  return `<table class="probs"><thead><tr><th>Squad</th><th class="num">${valueLabel}</th>${baselineKey ? '<th class="num">Baseline</th>' : ""}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// The verified winner from the manifest, after WinnerDetermined. Not a model output.
+function recordedOutcome() {
+  const winner = summary.winner && summary.winner.teamId;
+  const squads = (summary.squads || []).map((squad) => ({
+    teamId: squad.teamId,
+    team_name: squad.teamName,
+    outcome: String(squad.teamId) === String(winner) ? 1 : 0,
+  }));
+  return `<p><span class="tag outcome-tag">recorded outcome</span>Match finished at ${mmss(summary.conclusion_elapsed)}. The verified winner is 100% and every other squad 0%. This is the recorded result, not a model prediction.</p>` +
+    probabilityTable(squads, "outcome", "Recorded result");
+}
+
+function inputsFor(point) {
+  const squad = point.squads.find((item) => String(item.teamId) === selectedTeam());
+  if (!squad || !squad.features) return "";
+  const cells = Object.entries(squad.features)
+    .map(([name, value]) => `<tr><td>${esc(name)}</td><td class="num">${value === null ? "unknown" : Number(value).toFixed(3)}</td></tr>`).join("");
+  return `<details><summary>Model inputs for the selected squad at ${mmss(point.elapsed)}</summary><table class="probs">${cells}</table>
+    <p class="when">hp_frac sums health and shields over alive and downed players; a downed player's health is the bleed-out pool, which the replay reports as full.</p></details>`;
+}
+
+function livePanel(live, kindLabel) {
+  if (!live || !live.available) return "";
+  if (!live.point) {
+    return `<p class="unavailable">No model prediction at ${mmss(frame.elapsed)}: ${esc(live.reason || "")}.</p>`;
+  }
+  const point = live.point;
+  const provenance = live.provenance || {};
+  const eligibility = point.eligibility === "unverified"
+    ? `<p class="unavailable">Eligibility unverified at this second${(point.eligibility_reasons || []).length ? ` (${esc(point.eligibility_reasons.join(", "))})` : ""}: no squad is excluded.</p>`
+    : `<p class="when">Eligibility verified: squads eliminated by ${mmss(point.elapsed)} have probability 0; the rest are renormalized.</p>`;
+  return `<p class="when"><strong>${kindLabel} at ${mmss(point.elapsed)}</strong> (replay t ${point.t}), the same second as the map and roster. Sampled every second; ${esc(provenance.file || "")}, sha256 ${esc((provenance.sha256 || "").slice(0, 12))}.</p>
+    ${eligibility}
+    <p class="when">${point.in_contention} squads in contention.</p>
+    ${probabilityTable(point.squads, "model", "Model (constrained)", "uniform_contention")}
+    ${inputsFor(point)}`;
+}
+
+// The frozen evaluation's own 30-second checkpoints, up to the slider time.
+function checkpointHistory(view, selection) {
+  if (!view || !view.available || !selection) return "";
+  const team = selectedTeam();
   const history = view.points.slice(0, selection.index + 1).map((past) => {
     const squad = past.squads.find((item) => String(item.teamId) === team);
     return squad ? `<div>${mmss(past.elapsed)} · model ${pct(squad.model)} · baseline ${pct(squad.uniform_contention)}${squad.eliminated ? " · eliminated" : ""}</div>` : "";
   }).join("");
-  return `${label}
-    <p class="when">${when}</p>
-    <p class="when">${asOf}</p>
-    ${eligibilityLine}
-    ${frame && frame.finished ? `<p class="when">The match has finished at the slider time. This prediction is from ${mmss(point.elapsed)}, before the result, and the squad counts below are as of then.</p>` : ""}
-    <p class="when">${point.in_contention} squads in contention at ${mmss(point.elapsed)}. Baseline: ${baselineName}.</p>
-    <table class="probs"><thead><tr><th>Squad</th><th class="num">Model (constrained)</th><th class="num">Baseline</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="history"><strong>Selected squad, checkpoints up to now</strong>${history || "<div>No prediction for this squad.</div>"}</div>`;
+  return `<details class="history"><summary>Selected squad at the 30-second evaluation checkpoints (historical)</summary>${history || "<div>No checkpoint for this squad.</div>"}</details>`;
+}
+
+function predictionPanel(view, live, selection, label, kindLabel) {
+  if (!view || !view.available) {
+    return `<p class="unavailable">Not available</p><p>${esc((view && (view.reason || view.limitation)) || "")}</p>`;
+  }
+  const outcomePart = frame && frame.finished ? recordedOutcome() : "";
+  const livePart = frame && frame.finished
+    ? (live && live.available && live.cutoff_t != null
+      ? `<p class="when">No model prediction is made after the result. The last per-second prediction was at ${mmss(live.cutoff_t - 1 - replayStart())} (replay t ${live.cutoff_t - 1}); move the slider there to see it.</p>`
+      : "")
+    : livePanel(live, kindLabel);
+  return `${label}${outcomePart}${livePart}${checkpointHistory(view, selection)}`;
 }
 
 function renderPredictions() {
   const checkpoints = (frame && frame.checkpoints) || {};
+  const live = (frame && frame.live) || {};
   let heldLabel = "";
   if (heldout && heldout.available) {
     const fit = heldout.evaluation_model || {};
     const metrics = heldout.game_metrics;
-    heldLabel = `<p><span class="tag heldout">held-out</span>Test session. Model fit on ${fit.train_sessions} train + ${fit.validation_sessions} validation sessions (l2 ${fit.l2}).</p>` +
-      (metrics ? `<p class="when">This game: log loss ${metrics.model.log_loss.toFixed(3)} vs contention baseline ${metrics.uniform_contention.log_loss.toFixed(3)}.</p>` : "") +
-      `<p class="when">${esc(heldout.limitation)}</p>`;
+    heldLabel = `<p><span class="tag heldout">held-out</span>Test session. Frozen evaluation model fit on ${fit.train_sessions} train + ${fit.validation_sessions} validation sessions (l2 ${fit.l2}); not refit.</p>` +
+      (metrics ? `<p class="when">This game, at the 30-second checkpoints: log loss ${metrics.model.log_loss.toFixed(3)} vs contention baseline ${metrics.uniform_contention.log_loss.toFixed(3)}.</p>` : "");
   }
-  heldoutBox.innerHTML = predictionPanel(heldout, checkpoints.heldout, heldLabel);
+  heldoutBox.innerHTML = predictionPanel(heldout, live.heldout, checkpoints.heldout, heldLabel, "Held-out prediction");
   let fitLabel = "";
   if (curve && curve.available) {
     fitLabel = `<p><span class="tag fitted">fitted on these games</span>Not held-out evidence.</p><p class="when">${esc(curve.limitation)}</p>`;
   }
-  curveBox.innerHTML = predictionPanel(curve, checkpoints.final, fitLabel);
+  curveBox.innerHTML = predictionPanel(curve, live.final, checkpoints.final, fitLabel, "Final-model prediction");
 }
 
 function renderEvaluation(evaluation) {
@@ -315,7 +378,7 @@ function renderEvaluation(evaluation) {
     return `<div>${esc(names[method] || method)}: log loss ${values.log_loss.toFixed(3)}, Brier ${values.brier.toFixed(3)}, top-1 ${values.top1.toFixed(3)}</div>`;
   }).join("");
   evalBox.innerHTML = `
-    <p>Report ${esc(evaluation.generated_at || "")}. Method ${esc(evaluation.prediction_type)}. Held out by session: ${evaluation.held_out ? "yes" : "no"}.</p>
+    <p>Report ${esc(evaluation.generated_at || "")}. Method ${esc(evaluation.prediction_type)}. Held out by session: ${evaluation.held_out ? "yes" : "no"}. Scored at 30-second checkpoints; the per-second predictions above are not part of this report.</p>
     ${evaluation.warning ? `<p>${esc(evaluation.warning)}</p>` : ""}
     <p>${esc(evaluation.limitation)}</p>
     ${lines}
@@ -326,6 +389,6 @@ function renderEvaluation(evaluation) {
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
 squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); });
-timeInput.addEventListener("input", () => loadFrame(Number(timeInput.value)));
+timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
 loadBackend();
 loadMatches();

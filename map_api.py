@@ -22,6 +22,13 @@ def _rings_for(game_id: int) -> list:
     return _rings[game_id]
 
 
+def ring_at(game_id: int, t: int) -> dict:
+    state = current_ring(_rings_for(game_id), t)
+    state["t"] = t
+    state["show_future"] = False
+    return state
+
+
 @map_bp.get("/api/map-config")
 def map_config_route():
     map_id = request.args.get("map") or ""
@@ -34,7 +41,4 @@ def ring_route(game_id: int):
         t = int(request.args["t"])
     except (KeyError, ValueError):
         return jsonify({"error": "t is required"}), 400
-    state = current_ring(_rings_for(game_id), t)
-    state["t"] = t
-    state["show_future"] = False
-    return jsonify(state)
+    return jsonify(ring_at(game_id, t))
