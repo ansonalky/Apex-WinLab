@@ -210,6 +210,36 @@ python3 train_model.py --data-dir /path/to/data --out-dir /path/to/models
 
 `features.py` exits 2 when no group was produced. `extraction.json` holds the inventory, drops, and per-game eligibility diagnostics. `report.json` is always written. It contains the inventory, dataset counts, dropped games with reasons, eligibility diagnostics, evaluation, and optimizer state. `model.json` is written only when status is `trained`.
 
+## Frozen evaluation and held-out export
+
+The session split and model settings are frozen in `config/frozen_evaluation.json` (committed). It records:
+- the train, validation and test sessions and games;
+- `l2` = 0.01 and its validation selection;
+- the 12 features and the 30 s checkpoint step;
+- each game's raw `sha256`;
+- the test metrics.
+
+**Policy:** do not re-select `l2`, features, sessions or baselines against these 6 test games. A new evaluation needs new test sessions.
+
+```sh
+python3 export_heldout.py export --data-dir data --out-dir data/exports
+```
+
+`export` reads only the frozen config and checks every raw file against its frozen hash. It then:
+1. refits the evaluation model on train + validation with the frozen settings;
+2. scores the test sessions;
+3. writes nothing unless every frozen test metric reproduces within 1e-9.
+
+Output, which is never overwritten: `data/exports/heldout-session-split-v1/` with `bundle.json`, `heldout_predictions.json`, `metrics.json`, `evaluation_model.json` and `README.md`, plus `heldout-session-split-v1.tar.gz` and its `.sha256` for transfer.
+
+- **Held-out vs final:** `prediction_type` is `held_out_session_split_test`, with `held_out: true` and `final_model_predictions_included: false`. Final-model predictions come only from `data/models/model.json`, which is fit on all 51 games; that file is never part of this bundle.
+- **Timestamps:** `replay_time_unix = replay match_start + t`. The replay's own `match_start` is 7–16 s later than the manifest's games-API `match_start` in all 51 games. Both are listed per game.
+- **Squads:** each checkpoint lists every squad in the lobby with:
+  - `team_id`, `team_name`, `is_winner`;
+  - `eliminated` and `in_contention`;
+  - `standing_players`;
+  - probabilities for `model`, `uniform`, `uniform_contention`, `most_players`, and `model_masked_diagnostic`.
+
 ## Notes for collection
 
 No collector or decoder change is required. Points the pipeline depends on:

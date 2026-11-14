@@ -179,7 +179,14 @@ def squad_rows(snapshot: list[dict]) -> list[dict]:
         values["center_dist_missing"] = 1.0 if dist_rel[key] is None else 0.0
         values["spread_rel"] = spread_rel[key]
         values["spread_missing"] = 1.0 if spread_rel[key] is None else 0.0
-        out_rows.append({"team": key, "features": {name: values[name] for name in FEATURES}})
+        names = [row["teamName"]["value"] for row in squads[key] if row["teamName"]["value"]]
+        out_rows.append(
+            {
+                "team": key,
+                "team_name": names[0] if names else None,
+                "features": {name: values[name] for name in FEATURES},
+            }
+        )
     return out_rows
 
 
@@ -337,6 +344,9 @@ def game_examples(payload: dict, record: dict, stats_game: dict | None, step: in
     winner = label["teamId"]
     result["winner"] = winner
     diagnostics = {
+        # The replay's own clock. Feed timestamps equal this plus ``t``. It
+        # differs from the games API ``match_start`` on the manifest record.
+        "replay_match_start": replayed["state"].get("match_start"),
         "playing_start": replayed["playing_start"],
         "cutoff": replayed["cutoff"],
         "checkpoints": len(replayed["snapshots"]),
