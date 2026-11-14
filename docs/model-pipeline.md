@@ -240,6 +240,24 @@ Output, which is never overwritten: `data/exports/heldout-session-split-v1/` wit
   - `standing_players`;
   - probabilities for `model`, `uniform`, `uniform_contention`, `most_players`, and `model_masked_diagnostic`.
 
+## Dashboard handoff: held-out predictions (proposal for the dashboard owner)
+
+The dashboard at 986933e (`docs/dashboard.md`) reads `models/model.json` for a `final_model_fitted` curve and `models/report.json` for aggregate held-out metrics. Its contract has no slot for per-checkpoint held-out predictions, so the export bundle is not shown yet. Proposed adapter, in `dashboard_data.py`:
+
+1. **Discovery:** read `DATA/exports/heldout-session-split-v1/bundle.json`. Accept it only if:
+   - `prediction_type == "held_out_session_split_test"`, `held_out` is true, and `final_model_predictions_included` is false;
+   - each file's sha256 matches `files`.
+
+   Otherwise show **Not available**.
+2. **Join:** match `heldout_predictions.json` entries on `(game_id, t)`, and squads on `team_id` = the dashboard's `teamId`. On all 6 test games, the bundle's `t`, `elapsed_s` and team ids equal the dashboard's own 30 s checkpoints exactly.
+3. **Panel:** add a separate "Held-out prediction (test session)" panel. Do not merge it into the final-model curve.
+   - Plot `probabilities.model`.
+   - Use `probabilities.uniform_contention` as the reference baseline.
+   - Mark `eliminated` squads.
+   - Label it as evaluation evidence from `evaluation_model.json`, fit on train + validation sessions.
+4. **Other games:** for the 45 train and validation games (`frozen_config.games`), show **Not available: game was used for fitting**. Never substitute final-model numbers.
+5. **Final-model curve:** keep it as is, labeled `final_model_fitted`. Per the audit, its `uniform` baseline is 1/lobby and overstates the model's edge; `uniform_contention` needs the elimination flags from `features.game_examples`.
+
 ## Notes for collection
 
 No collector or decoder change is required. Points the pipeline depends on:
