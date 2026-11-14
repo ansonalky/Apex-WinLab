@@ -13,11 +13,16 @@ First real run on the collection from d7196f5. The synthetic tests check mechani
 - All 22 sessions have a stats cache, and each game has exactly one standings entry.
 - All 51 labels include the standings source, and all 51 pass the `resolve_winner` cross-check.
 
-**Extraction:** 3 games first, then all 51, with no drops: 2,045 checkpoint groups and 37,544 squad rows (20 squads per group). 9,816 squad rows have no standing player. The verified winner never has zero standing players at a checkpoint.
+**Extraction:** 3 games first, then all 51, with no drops: 2,045 checkpoint groups and 37,544 squad rows. **Correction:** an earlier version of this doc said "20 squads per group", which came from the 3-game sample. The real mean is 18.36. Group size is the lobby size: it is constant within a game and equals both the replay's `totalTeams` and the number of squads in that game's standings in all 51 games. No squad is excluded.
+
+| Lobby size | 11 | 13 | 15 | 16 | 17 | 18 | 19 | 20 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Games | 3 | 1 | 2 | 3 | 2 | 7 | 8 | 25 |
+| Groups | 119 | 41 | 81 | 120 | 78 | 280 | 319 | 1,007 | 9,816 squad rows have no standing player. The verified winner never has zero standing players at a checkpoint.
 
 **Status semantics on real data:** the number of squads with a standing player equals the replay's own `teamsAlive` at 1,801 of 2,045 checkpoints. It is off by ±1 at 236 and by +2 at 8. Squads went from no standing player back to standing 8 times. Status alone is therefore not a reliable elimination signal, which supports keeping no-standing squads as candidates.
 
-**Session-split evaluation:**
+**Session-split evaluation** (split and results preserved from the first run; the audit reproduces them exactly):
 
 | Split | Sessions | Games |
 | --- | --- | --- |
@@ -29,13 +34,29 @@ First real run on the collection from d7196f5. The synthetic tests check mechani
 
 | Test, game-weighted | Log loss | Brier | Top-1 |
 | --- | --- | --- | --- |
-| Model | **2.345** | 0.881 | 0.147 |
-| Uniform | 2.850 | 0.942 | 0.058 |
+| Model (condition + position) | **2.345** | 0.881 | 0.147 |
+| Model, condition only | 2.343 | 0.881 | 0.144 |
+| Uniform over squads in contention | 2.419 | 0.895 | 0.105 |
+| Uniform over lobby | 2.850 | 0.942 | 0.058 |
 | Most standing players | 2.637 | 0.876 | 0.126 |
+| *Diagnostic:* model, eliminated squads masked to 0 | 2.341 | 0.880 | 0.147 |
 
-Checkpoint-weighted results are within 0.002. By elapsed time, model versus uniform log loss is 2.76/2.85 (0–5 min), 2.60/2.85 (5–10), 2.43/2.85 (10–15), and 1.55/2.85 (15–20). The model beats uniform on each of the 6 test games, by 0.41–0.53 nats. It is slightly worse than the most-players heuristic on Brier, and in the first 5 minutes.
+Checkpoint-weighted log loss is within 0.002 of game-weighted for every method.
 
-**Calibration not reported:** only 6 test games, and 20 are required. Six games from four sessions is a small test set; these numbers are a first estimate, not a settled result.
+**Corrected reading.** The earlier 0.505-nat margin was measured against uniform over the whole lobby (mean 18.4 squads). That baseline keeps eliminated squads in play for the whole match. Against uniform over squads still in contention (mean 13.5), the margin is **0.074 nats**. The model beats that baseline on all 6 test games, by 0.013–0.133 nats.
+
+| Elapsed | Model | Uniform (contention) | Uniform (lobby) | Most players |
+| --- | --- | --- | --- | --- |
+| 0–5 min | 2.760 | 2.834 | 2.850 | 2.668 |
+| 5–10 | 2.603 | 2.691 | 2.850 | 3.034 |
+| 10–15 | 2.432 | 2.470 | 2.850 | 3.348 |
+| 15–20 | 1.553 | 1.651 | 2.850 | 1.467 |
+
+Most of the drop from lobby-uniform comes from knowing which squads are out, not from the model.
+
+**Position features add no measurable value.** The condition-only model was evaluated with the same split and the same validation-based `l2` selection, and test was scored once. Its validation log loss was worse (2.540 vs 2.520). Its test log loss was 2.343 vs 2.345 for the full model. The full model was better on 3 test games and worse on 3. With 6 test games, there is no evidence either way.
+
+**Calibration not reported.** Only 6 games were evaluated; our chosen minimum is 20 (see Evaluation). Six games from four sessions is a small test set. These numbers are a first estimate, not a settled result.
 
 Features that are always tied together (`no_standing` with `center_dist_missing` and `spread_missing`; the four status counts sum to squad size) make individual weights non-interpretable. L2 keeps the fit unique.
 
@@ -88,7 +109,37 @@ Why: the status strings are `alive`, `downed`, `eliminated`, and `dead`. Their m
 
 Every group contains its verified winner. If the winner's `teamId` is missing from a snapshot, that checkpoint is skipped and listed (`winner_not_in_snapshot`). It is never relabeled.
 
-Uncertain until real data is inspected: whether `teamPlacement` written during play marks squad elimination, and whether the trial's end-of-game `eliminated`/`dead` statuses on winners are a post-match artifact.
+### Definitive elimination (evaluation only)
+
+Zero standing players is not the same as elimination. Squad elimination is taken from the feed event `{"type": "eliminated", "team": [player objects]}` up to and including `t`. The event's squad is the single `teamId` shared by its player objects. It is used only to build the contention baseline and the masked diagnostic. It is not a model feature, so the model's predictions are unchanged.
+
+Verified on all 51 games:
+- `totalTeams − (squads with an event so far) == teamsAlive` at all 60,677 Playing frames.
+- Every non-winning squad has exactly one event during Playing. No event names a squad outside the standings.
+- Elimination order matches final standings placement, with zero inversions.
+- No player on an eliminated squad is revived or respawned afterward.
+- The winner's only events (game 123421, t 1199, one duplicate) fall in `Resolution`, after the checkpoint cutoff.
+
+Residual uncertainty:
+- 258 damage, kill or down events are credited to players of already-eliminated squads. 177 come within 10 s. Of the 81 later ones, most are from deployables, the ring, or bleed-out, which keep crediting their owner. About 10 name a gun or grenade, and these are unexplained.
+- Player status lags the squad event. 200 squad rows show a standing player after their squad's event, because the status was last written at or before the event and never updated.
+
+At a checkpoint, a group's eliminations count as **verified** only when all of these hold:
+- the events are unambiguous and not duplicated;
+- `totalTeams − eliminated == teamsAlive`;
+- the eventual winner is not among the eliminated;
+- every eliminated squad appears in the snapshot.
+
+Otherwise the group is marked **unverified**: no squad is treated as eliminated, and the contention baseline falls back to the lobby. On this data all 2,045 groups verify. Squads in contention equal `teamsAlive` in every group.
+
+Status versus elimination across all squad rows:
+
+| | Eliminated (event) | Not eliminated |
+| --- | --- | --- |
+| No standing player | 9,762 | 54 |
+| Standing player | 200 | 27,528 |
+
+The 54 no-standing, not-eliminated rows are squads whose players are all `eliminated`/`dead` but whose squad event hasn't fired yet. That's consistent with a respawn window. They are kept as candidates.
 
 ## Features
 
@@ -130,10 +181,17 @@ The softmax summing to 1 does not make the probabilities calibrated. Calibration
 **Fallback: `game_held_out_weaker`.** This leave-one-game-out evaluation runs only when a session split isn't possible. `l2` is fixed at 0.1, and preprocessing is refit for every fold. The report carries a warning that held-out games share sessions, lobbies, and teams with training games, so the result is likely optimistic.
 
 Metrics on the test predictions:
-- **Primary:** game-weighted log loss, compared against **uniform** probabilities over the group's candidate squads.
-- Also: Brier score (multi-class, `Σ (p_i − y_i)²`) and top-1 accuracy (credit split across ties), plus the `most_players` heuristic baseline.
-- Each metric is reported game-weighted (primary) and checkpoint-weighted (labeled), and broken down by `elapsed` in 5-minute buckets.
-- Calibration: 10 equal-width bins over every squad's probability. Each bin reports game-weighted mean prediction, observed win rate, rows, and games, plus game-weighted ECE. Reported only when at least 20 games are evaluated; otherwise `insufficient_data`.
+- **Primary:** game-weighted log loss, `−ln p(winner)`, averaged as described under weighting.
+- **Baselines:**
+  - `uniform`: 1/(lobby size) for every squad, all match long.
+  - `uniform_contention`: 1/(squads in contention) for squads without a verified elimination, 0 for eliminated squads. This is the meaningful uniform reference.
+  - `most_players`: all mass on the squads with the most standing players, split evenly.
+  - `model_masked_diagnostic`: the model's probabilities with verified-eliminated squads set to 0 and the rest renormalized. A diagnostic, not a selected model.
+- **Brier (per group):** multi-class `Σ_i (p_i − y_i)²` over every squad in the group, where `y_i` is 1 for the winner and 0 otherwise. Range 0 (certain and right) to 2 (certain and wrong). Uniform over `n` squads scores `1 − 1/n`: 0.95 for 20 squads, 0.5 for 2. Brier therefore depends on lobby size and contention, so compare methods only on the same groups.
+- **Top-1:** 1 if the winner has the highest probability, with credit split evenly across ties.
+- **Weighting:** each group gets weight `1/(groups in its game)`. A game's checkpoints are averaged first, then games are averaged equally, so a 40-checkpoint game counts the same as a 20-checkpoint game. Checkpoint-weighted results (every group weight 1) are reported alongside and labeled. Per-elapsed buckets apply the same game weighting within each bucket.
+- **Calibration:** 10 equal-width bins over every squad's predicted probability. Each bin reports game-weighted mean prediction, observed win rate, rows, and games, plus game-weighted ECE. It is reported only when at least 20 games are evaluated. **That minimum is our chosen policy**, not a statistical standard. Below it, many bins would hold a handful of winners, and bin rates would mostly reflect which few games happened to be in test.
+- **Ablation:** `condition_only` uses only status counts and health (`players_*`, `no_standing`, `hp_frac`, `hp_frac_missing`). It goes through the same split and validation-based `l2` selection as the full model, and test is scored once.
 
 ### Minimum data
 

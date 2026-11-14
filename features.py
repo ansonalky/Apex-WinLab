@@ -204,6 +204,8 @@ def replay_checkpoints(series: list[dict], step: int = CHECKPOINT_STEP) -> dict:
     cutoff = None
     snapshots: dict[int, list[dict]] = {}
     meta: dict[int, dict] = {}
+    eliminated: dict[Any, int] = {}
+    elimination_problems: list[dict] = []
     for frame in frame_entries(series):
         t = frame["t"]
         events = frame.get("f") or []
@@ -212,6 +214,15 @@ def replay_checkpoints(series: list[dict], step: int = CHECKPOINT_STEP) -> dict:
         state, observed, error = apply_frame(state, frame.get("d"), events, observed, t)
         if error:
             failures.append({"t": t, "error": error})
+        for event in events:
+            team, problem = elimination_team(event)
+            if problem:
+                elimination_problems.append({"t": t, "problem": problem})
+            elif team is not None:
+                if team in eliminated:
+                    elimination_problems.append({"t": t, "problem": "duplicate", "team": team})
+                else:
+                    eliminated[team] = t
         if start is None:
             if state.get("state") != "Playing":
                 continue
@@ -223,7 +234,13 @@ def replay_checkpoints(series: list[dict], step: int = CHECKPOINT_STEP) -> dict:
             continue
         if (t - start) % step == 0:
             snapshots[t] = export_players(state, observed, t)
-            meta[t] = {"teamsAlive": state.get("teamsAlive"), "elapsed": t - start}
+            meta[t] = {
+                "teamsAlive": state.get("teamsAlive"),
+                "totalTeams": state.get("totalTeams"),
+                "elapsed": t - start,
+                "eliminated": sorted(eliminated, key=str),
+                "elimination_problems": len(elimination_problems),
+            }
     return {
         "state": state,
         "failures": failures,
@@ -232,6 +249,45 @@ def replay_checkpoints(series: list[dict], step: int = CHECKPOINT_STEP) -> dict:
         "snapshots": snapshots,
         "meta": meta,
     }
+
+
+def elimination_team(event: Any) -> tuple[Any, str | None]:
+    """``teamId`` of a feed ``eliminated`` event, or a problem with it.
+
+    The event's ``team`` is the list of that squad's player objects. It
+    names a squad only when every player carries the same ``teamId``.
+    """
+    if not isinstance(event, dict) or event.get("type") != "eliminated":
+        return None, None
+    members = event.get("team")
+    ids = {m.get("teamId") for m in members if isinstance(m, dict)} if isinstance(members, list) else set()
+    if len(ids) != 1 or None in ids:
+        return None, "ambiguous_team"
+    return ids.pop(), None
+
+
+def contention(meta: dict, keys: list, winner: Any) -> dict:
+    """Which squads at a checkpoint are verified eliminated.
+
+    Elimination is verified for a group only when the feed events are
+    unambiguous and ``totalTeams - eliminated == teamsAlive`` at ``t``, and
+    the eventual winner is not among them. Otherwise the group is
+    ``unverified`` and no squad is marked eliminated.
+    """
+    eliminated = set(meta["eliminated"])
+    reasons = []
+    if meta["elimination_problems"]:
+        reasons.append("ambiguous_or_duplicate_event")
+    total, alive = meta.get("totalTeams"), meta.get("teamsAlive")
+    if not isinstance(total, int) or not isinstance(alive, int) or total - len(eliminated) != alive:
+        reasons.append("teamsAlive_disagrees")
+    if winner in eliminated:
+        reasons.append("winner_marked_eliminated")
+    if eliminated - set(keys):
+        reasons.append("eliminated_squad_not_in_snapshot")
+    if reasons:
+        return {"verified": False, "reasons": reasons, "flags": [False] * len(keys)}
+    return {"verified": True, "reasons": [], "flags": [key in eliminated for key in keys]}
 
 
 def verified_label(record: dict) -> dict | None:
@@ -287,6 +343,7 @@ def game_examples(payload: dict, record: dict, stats_game: dict | None, step: in
         "winner_no_standing": [],
         "squads_no_standing": 0,
         "squad_rows": 0,
+        "elimination_unverified": [],
     }
     for t in sorted(replayed["snapshots"]):
         rows = squad_rows(replayed["snapshots"][t])
@@ -299,14 +356,24 @@ def game_examples(payload: dict, record: dict, stats_game: dict | None, step: in
             diagnostics["winner_no_standing"].append(t)
         diagnostics["squads_no_standing"] += sum(int(row["features"]["no_standing"]) for row in rows)
         diagnostics["squad_rows"] += len(rows)
+        meta = replayed["meta"][t]
+        status = contention(meta, keys, winner)
+        if not status["verified"]:
+            diagnostics["elimination_unverified"].append({"t": t, "reasons": status["reasons"]})
+        # ``eliminated`` is evaluation metadata for the contention baseline.
+        # It is not in FEATURES and the model does not see it.
+        for row, flag in zip(rows, status["flags"]):
+            row["eliminated"] = flag
         result["groups"].append(
             {
                 "game_id": game_id,
                 "session_id": record.get("session_id"),
                 "t": t,
-                "elapsed": replayed["meta"][t]["elapsed"],
+                "elapsed": meta["elapsed"],
                 "rows": rows,
                 "label": label_index,
+                "elimination_verified": status["verified"],
+                "teams_alive": meta.get("teamsAlive"),
             }
         )
     result["diagnostics"] = diagnostics
