@@ -15,6 +15,8 @@ let summary = null;
 let frame = null;
 let curve = null;
 let heldout = null;
+let mapConfig = null;
+let currentRing = null;
 let requestToken = 0;
 
 function mmss(seconds) {
@@ -79,7 +81,10 @@ async function loadMatch(gameId) {
     `session ${summary.session_id}`,
     summary.winner && summary.winner.teamName ? `verified winner ${summary.winner.teamName}` : "winner unknown",
   ].filter(Boolean).join(" · ");
-  note.textContent = summary.coordinate_note;
+  mapConfig = await (await fetch(`/api/map-config?map=${encodeURIComponent(summary.map_name || "")}`)).json();
+  note.textContent = mapConfig.supported
+    ? "Positions use the Overstat mapCord transform on the matching 2048 map. z is omitted. Only the current ring is shown."
+    : mapConfig.message;
   squadSelect.innerHTML = "";
   for (const squad of summary.squads) {
     const option = document.createElement("option");
@@ -102,6 +107,8 @@ async function loadFrame(index) {
   const next = await (await fetch(`/api/matches/${summary.game_id}/frames/${index}`)).json();
   if (token !== requestToken) return;
   frame = next;
+  currentRing = await (await fetch(`/api/matches/${summary.game_id}/ring?t=${frame.t}`)).json();
+  if (token !== requestToken) return;
   clock.textContent = mmss(frame.elapsed);
   draw();
   renderRoster();
@@ -118,54 +125,16 @@ function colorFor(teamId) {
 }
 
 function draw() {
-  const width = canvas.width;
-  const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#1b1f27";
-  ctx.fillRect(0, 0, width, height);
-  const points = (frame.players || []).filter((player) => player.x !== null && player.y !== null);
-  ctx.fillStyle = "#9aa3b2";
-  ctx.font = "14px sans-serif";
-  if (!points.length) {
-    ctx.fillText("No positions at this time", 24, 36);
-    return;
-  }
-  const xs = points.map((player) => player.x);
-  const ys = points.map((player) => player.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const pad = 36;
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  const scale = Math.min((width - pad * 2) / spanX, (height - pad * 2) / spanY);
-  const project = (x, y) => [
-    pad + (x - minX) * scale,
-    height - pad - (y - minY) * scale,
-  ];
-  const selected = selectedTeam();
-  for (const player of points) {
-    const [px, py] = project(player.x, player.y);
-    const mine = String(player.teamId) === selected;
-    ctx.globalAlpha = mine ? 1 : 0.35;
-    ctx.fillStyle = colorFor(player.teamId);
-    ctx.beginPath();
-    ctx.arc(px, py, mine ? 7 : 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    if (mine) {
-      ctx.globalAlpha = 1;
-      ctx.fillText(player.name || "", px + 8, py - 8);
-    }
-  }
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "#9aa3b2";
-  ctx.fillText("x (unverified units)", pad, height - 12);
-  ctx.save();
-  ctx.translate(14, height - pad);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("y (unverified units)", 0, 0);
-  ctx.restore();
+  if (!frame) return;
+  window.ApexMap.draw({
+    canvas,
+    ctx,
+    frame,
+    selectedTeam: selectedTeam(),
+    colorFor,
+    ring: currentRing,
+    mapConfig,
+  });
 }
 
 function bar(value, max, className) {
@@ -279,6 +248,7 @@ function renderEvaluation(evaluation) {
   `;
 }
 
+window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
 squadSelect.addEventListener("change", () => { draw(); renderRoster(); renderPredictions(); });
 timeInput.addEventListener("input", () => loadFrame(Number(timeInput.value)));

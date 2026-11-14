@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>Apex WinLab</h1>
-    <p class="lede">One accepted match at a time. Positions use unverified game coordinates.</p>
+    <p class="lede">One accepted match at a time. The map uses the Overstat transform when that map version has an image.</p>
     <p id="backend" class="backend">Data backend: checking…</p>
   </header>
   <section class="controls">
@@ -27,7 +27,10 @@
   <p id="match-meta" class="meta"></p>
   <p id="coord-note" class="note"></p>
   <div class="layout">
-    <canvas id="plot" width="720" height="720" aria-label="Player positions"></canvas>
+    <div>
+    <canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas>
+    <p id="ring-status" class="meta"></p>
+  </div>
     <div>
       <h2>Selected squad</h2>
       <div id="roster"></div>
@@ -39,6 +42,7 @@
       <div id="evaluation" class="panel"></div>
     </div>
   </div>
+  <script src="/static/map_view.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

@@ -21,6 +21,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template
 
 from dashboard_data import MatchStore
+from map_api import map_bp
 
 
 def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[object, dict]:
@@ -66,6 +67,9 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         store, info = select_store(data_dir, backend)
     info = info or {"backend": getattr(store, "backend", "files"), "label": "", "detail": ""}
     app.config["DATA_BACKEND"] = info
+    # The map and ring endpoints read local replay files under either backend.
+    app.config["DATA_DIR"] = data_dir.resolve()
+    app.register_blueprint(map_bp)
 
     @app.get("/")
     def index():
