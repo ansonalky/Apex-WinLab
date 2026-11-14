@@ -12,15 +12,27 @@ Needed to show a match:
 | `DATA/raw/<livedata>.timeseries.json` | Positions, health, shields, status. Path is the record's `download_path`, then `DATA/raw/` |
 | Decoder `apply_frame` / `export_players` | One replay, cached under `DATA/dashboard/<game_id>.json` |
 
-Needed for probabilities and the evaluation panel, and **not in this data directory**:
+Prediction panels. Each says **Not available** when its artifact is missing or invalid; nothing is fabricated.
 
-| Artifact | What it would show |
-| --- | --- |
-| `DATA/models/model.json` | Final-model fitted win probabilities at 30-second checkpoints, via `train_model.predict`. Not held-out. |
-| `DATA/models/report.json` | Held-out aggregate log loss, Brier, top-1, and calibration. Per-checkpoint held-out probabilities are not stored, so they cannot be plotted. |
-| `DATA/models/extraction.json` | Extraction inventory only. The dashboard does not require it. |
+| Panel | Artifact | Meaning |
+| --- | --- | --- |
+| **Held-out win probability** (primary) | `DATA/exports/heldout-session-split-v1/` | Per-checkpoint predictions for the 6 test games of the frozen session split. The model was fit on other sessions. |
+| **Final model: fitted on these games** | `DATA/models/model.json` | A forward pass of the model fit on all 51 games. In-sample; not evidence. |
+| **Held-out evaluation: all test games** | `DATA/models/report.json` | Aggregate test metrics. Contention uniform is listed as the primary baseline. |
 
-`docs/model-pipeline.md` describes a completed evaluation. Those figures are not copied into the UI. Until `report.json` and `model.json` are present, both panels say **Not available**.
+**Held-out bundle validation.** The bundle is used only if all of these hold:
+- `schema_version` is 1;
+- `prediction_type` is `held_out_session_split_test`;
+- `held_out` is true and `final_model_predictions_included` is false;
+- every file listed in `bundle.json` matches its sha256.
+
+Predictions are joined on `(game_id, t)` and `teamId`. Each bundle checkpoint must be one of the dashboard's own checkpoints, with the same `elapsed` and the same set of squads. Any mismatch makes the panel Not available. For the 45 train and validation games, the panel says held-out predictions are unavailable and names the split.
+
+**Time.** Predictions exist every 30 s from Playing start until the replay reports `teamsAlive <= 1`. For each slider second, the server returns the most recent checkpoint at or before it (`frames/<i>` → `checkpoints.heldout` / `checkpoints.final`, with `age_s`). The page shows that checkpoint's own time (MM:SS, replay `t`, UTC on the replay clock), plus how far the slider is past it. It never selects a later checkpoint and never interpolates. The per-squad history lists only checkpoints up to the current one.
+
+**Baseline.** Both prediction panels use contention uniform: 1 / squads without a verified elimination event, and 0 for eliminated squads. Eliminations come from feed `eliminated` events up to `t`, checked against `teamsAlive`. Where that check fails, the panel falls back to lobby uniform and says so.
+
+The demo opens on the first held-out test game.
 
 Coordinate units are unverified. The plot is XY only. `z` is omitted. No map image is used.
 
@@ -32,16 +44,16 @@ From the repository root, with this machine's telemetry:
 
 ```sh
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py --data-dir /workspace/data --port 5000
+.venv/bin/python app.py --data-dir data --port 5050
 ```
 
 On a Mac, pass the directory that contains `collection/` and `raw/`:
 
 ```sh
-.venv/bin/python app.py --data-dir /path/to/data --port 5000
+.venv/bin/python app.py --data-dir /path/to/data --port 5050
 ```
 
-Open `http://127.0.0.1:5000`.
+Open `http://127.0.0.1:5050`. Port 5000 is taken by macOS AirPlay Receiver on this Mac.
 
 ## Integration checklist
 
@@ -50,9 +62,10 @@ Open `http://127.0.0.1:5000`.
 - [ ] The first page loads that match, its squads, and a time slider in MM:SS from Playing start.
 - [ ] Moving the slider changes positions without a new full replay (the timeline is cached).
 - [ ] Health, shields, and status for the selected squad use `unknown` when the replay has no value.
-- [ ] Win probability says Not available unless `models/model.json` exists, and any curve is labeled `final_model_fitted`, not held-out.
+- [ ] Held-out panel is primary on the 6 test games, says Not available for the other 45, and shows the past checkpoint's own time.
+- [ ] Final-model panel says Not available unless `models/model.json` exists, and is labeled fitted on these games.
 - [ ] The evaluation panel says Not available unless `models/report.json` has `evaluation.status == "ok"`.
-- [ ] `features.py`, `train_model.py`, and `overstat_patch.py` are unchanged by dashboard commits.
+- [ ] `overstat_patch.py` and the frozen evaluation (`config/frozen_evaluation.json`) are unchanged by dashboard commits.
 
 ## Tests
 

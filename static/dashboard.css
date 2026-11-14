@@ -25,3 +25,15 @@ canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c33
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }
+.primary { border-color: #4e79a7; }
+.secondary { opacity: 0.9; }
+.tag { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 99px; background: #2c3340; margin-right: 0.35rem; }
+.tag.heldout { background: #1f3a57; color: #a0cbe8; }
+.tag.fitted { background: #4a3a1f; color: #ffbe7d; }
+.when { color: #b7beca; font-size: 0.85rem; }
+table.probs { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.4rem; }
+table.probs th, table.probs td { text-align: left; padding: 0.15rem 0.3rem; }
+table.probs td.num, table.probs th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.probs tr.selected { background: #263041; }
+table.probs tr.out { color: #6b7380; }
+.history { max-height: 10rem; overflow-y: auto; font-size: 0.8rem; color: #b7beca; margin-top: 0.4rem; }

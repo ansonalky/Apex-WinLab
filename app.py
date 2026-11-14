@@ -13,7 +13,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template
 
-from dashboard_data import MatchStore, evaluation_panel, list_matches
+from dashboard_data import MatchStore, evaluation_panel
 
 
 def create_app(data_dir: Path) -> Flask:
@@ -27,7 +27,7 @@ def create_app(data_dir: Path) -> Flask:
 
     @app.get("/api/matches")
     def matches():
-        return jsonify(list_matches(store.data_dir))
+        return jsonify(store.matches())
 
     @app.get("/api/matches/<int:game_id>")
     def match_summary(game_id: int):
@@ -46,6 +46,10 @@ def create_app(data_dir: Path) -> Flask:
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):
         return jsonify(store.curve_points(game_id))
+
+    @app.get("/api/matches/<int:game_id>/heldout")
+    def match_heldout(game_id: int):
+        return jsonify(store.heldout_points(game_id))
 
     @app.get("/api/evaluation")
     def evaluation():

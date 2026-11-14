@@ -240,7 +240,7 @@ Output, which is never overwritten: `data/exports/heldout-session-split-v1/` wit
   - `standing_players`;
   - probabilities for `model`, `uniform`, `uniform_contention`, `most_players`, and `model_masked_diagnostic`.
 
-## Dashboard handoff: held-out predictions (proposal for the dashboard owner)
+## Dashboard handoff: held-out predictions (implemented; see docs/dashboard.md)
 
 The dashboard at 986933e (`docs/dashboard.md`) reads `models/model.json` for a `final_model_fitted` curve and `models/report.json` for aggregate held-out metrics. Its contract has no slot for per-checkpoint held-out predictions, so the export bundle is not shown yet. Proposed adapter, in `dashboard_data.py`:
 

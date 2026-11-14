@@ -6,6 +6,7 @@ const meta = document.querySelector("#match-meta");
 const note = document.querySelector("#coord-note");
 const roster = document.querySelector("#roster");
 const curveBox = document.querySelector("#curve");
+const heldoutBox = document.querySelector("#heldout");
 const evalBox = document.querySelector("#evaluation");
 const canvas = document.querySelector("#plot");
 const ctx = canvas.getContext("2d");
@@ -13,6 +14,7 @@ const ctx = canvas.getContext("2d");
 let summary = null;
 let frame = null;
 let curve = null;
+let heldout = null;
 let requestToken = 0;
 
 function mmss(seconds) {
@@ -22,8 +24,17 @@ function mmss(seconds) {
   return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
+// Names come from telemetry; never insert them as HTML.
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
 function textOrUnknown(value) {
-  return value === null || value === undefined || value === "" ? "unknown" : value;
+  return value === null || value === undefined || value === "" ? "unknown" : esc(value);
+}
+
+function pct(value) {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 async function loadMatches() {
@@ -33,15 +44,22 @@ async function loadMatches() {
     const option = document.createElement("option");
     option.value = match.game_id;
     const quality = match.quality_score === null ? "unknown" : Number(match.quality_score).toFixed(2);
-    option.textContent = `${match.event || "Untitled"} · ${match.map_name || "map unknown"} · quality ${quality}`;
+    const tag = match.heldout ? "[held-out test] " : "";
+    option.textContent = `${tag}${match.event || "Untitled"} · ${match.map_name || "map unknown"} · quality ${quality}`;
     matchSelect.append(option);
   }
-  if (matches.length) await loadMatch(matches[0].game_id);
+  // Demo default: the first held-out test game, so the primary view has evidence.
+  const first = matches.find((match) => match.heldout) || matches[0];
+  if (first) {
+    matchSelect.value = String(first.game_id);
+    await loadMatch(first.game_id);
+  }
 }
 
 async function loadMatch(gameId) {
   summary = await (await fetch(`/api/matches/${gameId}`)).json();
   curve = await (await fetch(`/api/matches/${gameId}/curve`)).json();
+  heldout = await (await fetch(`/api/matches/${gameId}/heldout`)).json();
   const evaluation = await (await fetch("/api/evaluation")).json();
   meta.textContent = [
     summary.event,
@@ -63,7 +81,7 @@ async function loadMatch(gameId) {
   }
   timeInput.max = String(Math.max(0, summary.frame_count - 1));
   timeInput.value = "0";
-  renderCurve();
+  frame = null;
   renderEvaluation(evaluation);
   await loadFrame(0);
 }
@@ -76,6 +94,7 @@ async function loadFrame(index) {
   clock.textContent = mmss(frame.elapsed);
   draw();
   renderRoster();
+  renderPredictions();
 }
 
 function selectedTeam() {
@@ -162,44 +181,87 @@ function renderRoster() {
   `).join("");
 }
 
-function renderCurve() {
-  if (!curve || !curve.available) {
-    curveBox.innerHTML = `<p class="unavailable">Not available</p><p>${(curve && curve.limitation) || "Predictions are not available for this match."}</p>`;
-    return;
+// The server picks the checkpoint for the current second: the most recent one
+// at or before it (frame.checkpoints). The page never looks ahead or interpolates.
+function predictionPanel(view, selection, label) {
+  if (!view || !view.available) {
+    return `<p class="unavailable">Not available</p><p>${esc((view && (view.reason || view.limitation)) || "")}</p>`;
   }
+  if (!selection) {
+    return `${label}<p class="unavailable">No checkpoint yet at this time.</p>`;
+  }
+  const point = view.points[selection.index];
   const team = selectedTeam();
-  const rows = (curve.points || []).map((point) => {
-    const squad = point.squads.find((item) => String(item.teamId) === team);
-    if (!squad) return "";
-    return `<div>${mmss(point.elapsed)} model ${(squad.model * 100).toFixed(1)}% · uniform ${(squad.uniform * 100).toFixed(1)}% · most standing ${(squad.most_players * 100).toFixed(1)}%</div>`;
+  const age = selection.age_s;
+  const when = `Prediction at ${mmss(point.elapsed)} (replay t ${point.t}${point.replay_time_utc ? `, ${esc(point.replay_time_utc)}` : ""}).` +
+    (age > 0 ? ` Slider is ${age}s later; next prediction at ${mmss(point.elapsed + 30)} if the match is still undecided.` : " Slider is on this checkpoint.");
+  const baselineName = point.baseline === "uniform_lobby_fallback" || point.elimination_verified === false
+    ? "lobby uniform (elimination unverified)" : "contention uniform";
+  const rows = [...point.squads]
+    .sort((a, b) => b.model - a.model)
+    .map((squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
+        <td>${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</td>
+        <td class="num">${pct(squad.model)}</td>
+        <td class="num">${pct(squad.uniform_contention)}</td>
+      </tr>`).join("");
+  const history = view.points.slice(0, selection.index + 1).map((past) => {
+    const squad = past.squads.find((item) => String(item.teamId) === team);
+    return squad ? `<div>${mmss(past.elapsed)} · model ${pct(squad.model)} · baseline ${pct(squad.uniform_contention)}${squad.eliminated ? " · eliminated" : ""}</div>` : "";
   }).join("");
-  curveBox.innerHTML = `
-    <p>Type: ${curve.prediction_type}. Held out: ${curve.held_out ? "yes" : "no"}. In the final fit: ${curve.in_sample_game ? "yes" : "no"}.</p>
-    <p>Model: l2 ${curve.model_version && curve.model_version.l2}, step ${curve.model_version && curve.model_version.checkpoint_step_s}s, converged ${curve.model_version && curve.model_version.converged}.</p>
-    <p>${curve.limitation}</p>
-    ${rows || "<p class=\"unavailable\">Not available</p>"}
-  `;
+  return `${label}
+    <p class="when">${when}</p>
+    <p class="when">${point.in_contention} squads in contention. Baseline: ${baselineName}.</p>
+    <table class="probs"><thead><tr><th>Squad</th><th class="num">Model</th><th class="num">Baseline</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="history"><strong>Selected squad, checkpoints up to now</strong>${history || "<div>No prediction for this squad.</div>"}</div>`;
+}
+
+function renderPredictions() {
+  const checkpoints = (frame && frame.checkpoints) || {};
+  let heldLabel = "";
+  if (heldout && heldout.available) {
+    const fit = heldout.evaluation_model || {};
+    const metrics = heldout.game_metrics;
+    heldLabel = `<p><span class="tag heldout">held-out</span>Test session. Model fit on ${fit.train_sessions} train + ${fit.validation_sessions} validation sessions (l2 ${fit.l2}).</p>` +
+      (metrics ? `<p class="when">This game: log loss ${metrics.model.log_loss.toFixed(3)} vs contention baseline ${metrics.uniform_contention.log_loss.toFixed(3)}.</p>` : "") +
+      `<p class="when">${esc(heldout.limitation)}</p>`;
+  }
+  heldoutBox.innerHTML = predictionPanel(heldout, checkpoints.heldout, heldLabel);
+  let fitLabel = "";
+  if (curve && curve.available) {
+    fitLabel = `<p><span class="tag fitted">fitted on these games</span>Not held-out evidence.</p><p class="when">${esc(curve.limitation)}</p>`;
+  }
+  curveBox.innerHTML = predictionPanel(curve, checkpoints.final, fitLabel);
 }
 
 function renderEvaluation(evaluation) {
   if (!evaluation.available) {
-    evalBox.innerHTML = `<p class="unavailable">Not available</p><p>${evaluation.reason || ""}</p>`;
+    evalBox.innerHTML = `<p class="unavailable">Not available</p><p>${esc(evaluation.reason || "")}</p>`;
     return;
   }
   const metrics = evaluation.metrics || {};
-  const lines = Object.entries(metrics).map(([method, values]) => {
-    return `<div>${method}: log loss ${values.log_loss.toFixed(3)}, Brier ${values.brier.toFixed(3)}, top-1 ${values.top1.toFixed(3)}</div>`;
+  const order = ["model", "uniform_contention", "most_players", "uniform", "model_masked_diagnostic"];
+  const names = {
+    model: "Model",
+    uniform_contention: "Contention uniform (primary baseline)",
+    most_players: "Most standing players",
+    uniform: "Lobby uniform",
+    model_masked_diagnostic: "Model, eliminated masked (diagnostic)",
+  };
+  const methods = [...order.filter((m) => m in metrics), ...Object.keys(metrics).filter((m) => !order.includes(m))];
+  const lines = methods.map((method) => {
+    const values = metrics[method];
+    return `<div>${esc(names[method] || method)}: log loss ${values.log_loss.toFixed(3)}, Brier ${values.brier.toFixed(3)}, top-1 ${values.top1.toFixed(3)}</div>`;
   }).join("");
   evalBox.innerHTML = `
-    <p>Report ${evaluation.generated_at || ""}. Method ${evaluation.prediction_type}. Held out by session: ${evaluation.held_out ? "yes" : "no"}.</p>
-    ${evaluation.warning ? `<p>${evaluation.warning}</p>` : ""}
-    <p>${evaluation.limitation}</p>
+    <p>Report ${esc(evaluation.generated_at || "")}. Method ${esc(evaluation.prediction_type)}. Held out by session: ${evaluation.held_out ? "yes" : "no"}.</p>
+    ${evaluation.warning ? `<p>${esc(evaluation.warning)}</p>` : ""}
+    <p>${esc(evaluation.limitation)}</p>
     ${lines}
-    <p>Calibration: ${(evaluation.calibration && evaluation.calibration.status) || "Not available"}</p>
+    <p>Calibration: ${esc((evaluation.calibration && evaluation.calibration.status) || "Not available")}</p>
   `;
 }
 
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => { draw(); renderRoster(); renderCurve(); });
+squadSelect.addEventListener("change", () => { draw(); renderRoster(); renderPredictions(); });
 timeInput.addEventListener("input", () => loadFrame(Number(timeInput.value)));
 loadMatches();
