@@ -76,7 +76,11 @@ async function loadMatches() {
     matchSelect.append(option);
   }
   // Demo default: the first held-out test game, so the primary view has evidence.
-  const first = matches.find((match) => match.heldout) || matches[0];
+  // A link from Performance selects one game and does not change seeking.
+  const requested = new URLSearchParams(location.search).get("game");
+  const first = matches.find((match) => String(match.game_id) === requested)
+    || matches.find((match) => match.heldout)
+    || matches[0];
   if (first) {
     matchSelect.value = String(first.game_id);
     await loadMatch(first.game_id);
@@ -135,7 +139,11 @@ async function loadMatch(gameId) {
     option.textContent = `${squad.teamName} (${squad.teamId})`;
     squadSelect.append(option);
   }
-  if (summary.winner && summary.squads.some((squad) => String(squad.teamId) === String(summary.winner.teamId))) {
+  const linkedTeam = new URLSearchParams(location.search).get("team");
+  const linkedGame = new URLSearchParams(location.search).get("game");
+  if (linkedTeam && String(gameId) === linkedGame && summary.squads.some((squad) => String(squad.teamId) === linkedTeam)) {
+    squadSelect.value = linkedTeam;
+  } else if (summary.winner && summary.squads.some((squad) => String(squad.teamId) === String(summary.winner.teamId))) {
     squadSelect.value = String(summary.winner.teamId);
   }
   // Bounds are set once per match, from its first and last stored replay second.

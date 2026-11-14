@@ -104,3 +104,44 @@ ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS model_probability_raw doubl
 ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS eliminated boolean;
 ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS elimination_verified boolean;
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS metrics_json text;
+
+-- Final per-game results for the performance page.
+-- These tables are replaced by import_results.py. They are not derived from
+-- player_frames, and importing them does not delete replay or prediction rows.
+-- roster_key is the sorted Overstat player ids. team_id is match-local only.
+
+CREATE TABLE IF NOT EXISTS team_results (
+  game_id            integer NOT NULL REFERENCES matches (game_id),
+  roster_key         text NOT NULL,
+  team_id            integer,
+  team_name          text NOT NULL,
+  squad_format       text NOT NULL,
+  scoring_format     text NOT NULL,
+  points_comparable  boolean NOT NULL,
+  placement          integer,
+  kills              integer,
+  assists            integer,
+  damage             integer,
+  score              integer,
+  player_count       integer NOT NULL,
+  PRIMARY KEY (game_id, roster_key)
+);
+
+CREATE INDEX IF NOT EXISTS team_results_format
+  ON team_results (squad_format, points_comparable, game_id);
+
+CREATE TABLE IF NOT EXISTS player_results (
+  game_id        integer NOT NULL REFERENCES matches (game_id),
+  player_id      bigint NOT NULL,
+  player_name    text NOT NULL,
+  team_name      text NOT NULL,
+  roster_key     text NOT NULL,
+  squad_format   text NOT NULL,
+  kills          integer,
+  assists        integer,
+  damage         integer,
+  PRIMARY KEY (game_id, player_id)
+);
+
+CREATE INDEX IF NOT EXISTS player_results_player
+  ON player_results (player_id, squad_format);
