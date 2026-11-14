@@ -22,6 +22,10 @@ canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c33
 .hp > span { background: #e15759; }
 .sh > span { background: #4e79a7; }
 .unavailable { color: #f0c674; }
+.backend { font-size: 0.85rem; margin: 0.4rem 0 0; }
+.backend strong { padding: 0.1rem 0.45rem; border-radius: 99px; }
+.backend.tiger strong { background: #1f4a33; color: #8cd17d; }
+.backend.files strong { background: #4a3a1f; color: #ffbe7d; }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }

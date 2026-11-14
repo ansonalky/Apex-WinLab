@@ -60,6 +60,22 @@ Most of the drop from lobby-uniform comes from knowing which squads are out, not
 
 Features that are always tied together (`no_standing` with `center_dist_missing` and `spread_missing`; the four status counts sum to squad size) make individual weights non-interpretable. L2 keeps the fit unique.
 
+### Eligibility-constrained predictions (added after the audit; no refit)
+
+At each checkpoint, squads with a verified elimination event at or before that checkpoint get probability exactly 0, and the remaining probability is renormalized over the squads still in contention (`train_model.masked`). Checkpoints whose elimination evidence is inconsistent are left unconstrained and labeled `eligibility: unverified`; on the test set there are none.
+
+The rule is applied to the held-out export (`data/exports/heldout-session-split-v2/`, primary probability `model_constrained`) and to final-model inference in the dashboard and Tiger import. The audited v1 bundle and report are unchanged.
+
+| Test, game-weighted (frozen split and model) | Log loss | Brier | Top-1 |
+| --- | --- | --- | --- |
+| Model, eligibility-constrained | **2.341** | 0.880 | 0.147 |
+| Model, raw | 2.345 | 0.881 | 0.147 |
+| Uniform over squads in contention | 2.419 | 0.895 | 0.105 |
+
+These equal the frozen `model_masked_diagnostic` row exactly, because they are the same rule applied to the same predictions. The raw model put an average of 0.3% (at most 6.0%) of probability on already-eliminated squads.
+
+`explain_checkpoint.py --game G --elapsed MM:SS` prints the actual inputs, weights, and per-feature `w*z` terms for the top squads at one held-out checkpoint.
+
 ## Input contract
 
 `train_model.py --data-dir DATA` reads:

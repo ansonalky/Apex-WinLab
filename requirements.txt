@@ -1,3 +1,5 @@
 # Collector, decoder, and model scripts use the standard library.
 # The dashboard server needs Flask.
 flask==3.1.2
+# Tiger Data import and the dashboard's database backend.
+psycopg[binary]==3.2.3

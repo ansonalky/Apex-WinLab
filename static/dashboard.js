@@ -37,6 +37,17 @@ function pct(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+async function loadBackend() {
+  const box = document.querySelector("#backend");
+  try {
+    const info = await (await fetch("/api/backend")).json();
+    box.className = `backend ${info.backend === "tiger" ? "tiger" : "files"}`;
+    box.innerHTML = `Data backend: <strong>${esc(info.label || info.backend)}</strong> <span class="when">${esc(info.detail || "")}</span>`;
+  } catch (error) {
+    box.textContent = "Data backend: unknown";
+  }
+}
+
 async function loadMatches() {
   const matches = await (await fetch("/api/matches")).json();
   matchSelect.innerHTML = "";
@@ -271,4 +282,5 @@ function renderEvaluation(evaluation) {
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
 squadSelect.addEventListener("change", () => { draw(); renderRoster(); renderPredictions(); });
 timeInput.addEventListener("input", () => loadFrame(Number(timeInput.value)));
+loadBackend();
 loadMatches();

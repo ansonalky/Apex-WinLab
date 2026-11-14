@@ -394,5 +394,49 @@ class HeldOutApiTest(unittest.TestCase):
             self.assertEqual(len(points), 4)
 
 
+
+class BackendSelectionTest(unittest.TestCase):
+    def test_files_requested_is_labeled_files(self):
+        from app import select_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store, info = select_store(Path(tmp), "files")
+        self.assertEqual(store.backend, "files")
+        self.assertEqual(info["backend"], "files")
+        self.assertIn("requested", info["detail"])
+
+    def test_auto_without_database_says_why_it_uses_files(self):
+        from app import select_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store, info = select_store(Path(tmp), "auto", dsn="")
+        self.assertEqual(info["backend"], "files")
+        self.assertIn("database not used: DATABASE_URL is not set", info["detail"])
+
+    def test_auto_with_unreachable_database_redacts_and_uses_files(self):
+        from app import select_store
+
+        dsn = "postgresql://user:secret@127.0.0.1:1/none?connect_timeout=1"
+        with tempfile.TemporaryDirectory() as tmp:
+            _store, info = select_store(Path(tmp), "auto", dsn=dsn)
+        self.assertEqual(info["backend"], "files")
+        self.assertIn("database not used", info["detail"])
+        self.assertNotIn("secret", info["detail"])
+
+    def test_tiger_requested_never_falls_back_silently(self):
+        from app import select_store
+
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
+            select_store(Path(tmp), "tiger", dsn="")
+
+    def test_backend_is_served_and_shown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = create_app(Path(tmp), backend="files").test_client()
+            info = client.get("/api/backend").get_json()
+            page = client.get("/").data
+        self.assertEqual(info["backend"], "files")
+        self.assertIn(b'id="backend"', page)
+
+
 if __name__ == "__main__":
     unittest.main()

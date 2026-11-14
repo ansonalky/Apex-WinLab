@@ -9,6 +9,7 @@ not change. Held-out and final-model predictions come from separate
 from __future__ import annotations
 
 import json
+from datetime import timezone
 from typing import Any
 
 from dashboard_data import (
@@ -22,7 +23,10 @@ from dashboard_data import (
 
 
 def _iso(value) -> str | None:
-    return value.isoformat().replace("+00:00", "Z") if value is not None else None
+    """UTC ISO time. Postgres returns timestamptz in the session time zone."""
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _version(text: str | None) -> dict:
