@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """Train and evaluate a per-checkpoint winner model on accepted games.
 
-The model is a conditional logit: at one checkpoint of one game, each
-standing team gets a score ``w . x`` and the win probabilities are the
-softmax over those teams. Exactly one team is the label.
+Model: conditional logit. At one checkpoint of one game each eligible squad
+scores ``w . x`` and the win probabilities are the softmax over those squads.
+The verified eventual winner is the single positive.
 
-Evaluation is leave-one-game-out. Every checkpoint of a game sits in the
-same fold, so no game is both trained on and scored. Imputation and scaling
-are fit on the training fold only.
+Weighting: each checkpoint group carries weight ``1 / (groups in its game)``
+so every game counts once in the loss and in the primary metrics. A long
+game cannot dominate by contributing more 30-second checkpoints.
+Checkpoint-weighted metrics are also reported, labeled as such.
 
-Below ``--min-games`` independent games the script inventories the data,
-writes a report with ``status: insufficient_data`` and no metrics, and exits
-nonzero. It never trains or evaluates on fewer.
+Optimization: the objective is the weighted mean negative log-likelihood
+plus ``l2/2 * |w|^2``. It is strictly convex for ``l2 > 0``, so it has one
+minimum. Newton's method with backtracking line search runs until the
+gradient's max-norm is below ``tol``. A fit that does not reach that is
+reported as ``not_converged`` and no metrics or model are written.
+
+Splits: by tournament session, oldest sessions train, then validation (picks
+``l2``), newest test. Preprocessing is fit on the training split only.
+With too few sessions the fallback is leave-one-game-out, labeled
+``game_held_out_weaker`` because games in one session share lobbies and
+teams.
+
+Below ``--min-games`` usable games no model is fit and no metrics exist.
 """
 
 from __future__ import annotations
@@ -23,21 +34,33 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from features import FEATURES, build_dataset, load_accepted
+from features import CHECKPOINT_STEP, FEATURES, build_dataset, load_accepted
 
-# Default bar for training and evaluation. With fewer games, one game moves
-# accuracy by more than 5 points and the held-out estimate is noise.
 MIN_GAMES = 20
-# The flag can lower the bar for experiments, never below this.
 MIN_GAMES_FLOOR = 5
+# Session split needs at least this many sessions and games per split;
+# otherwise the weaker game-held-out evaluation is used.
+MIN_SESSIONS = 3
+MIN_TEST_GAMES = 5
+MIN_VALIDATION_GAMES = 3
+# Calibration bins are reported only with this many evaluated games.
+MIN_CALIBRATION_GAMES = 20
+CALIBRATION_BINS = 10
+L2_GRID = (0.01, 0.1, 1.0)
+DEFAULT_L2 = 0.1
+TOL = 1e-6
+MAX_ITER = 100
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# --- preprocessing ---------------------------------------------------------
+
+
 def fit_scaler(groups: list[dict]) -> dict:
-    """Training-fold mean and standard deviation of each known feature value."""
+    """Mean and standard deviation of each known feature value in ``groups``."""
     scaler = {}
     for name in FEATURES:
         values = [
@@ -55,14 +78,21 @@ def fit_scaler(groups: list[dict]) -> dict:
 
 def vectorize(row: dict, scaler: dict) -> list[float]:
     """Standardized features. An unknown value becomes the training mean (0)."""
-    vector = []
-    for name in FEATURES:
-        value = row["features"][name]
-        if value is None:
-            vector.append(0.0)
-        else:
-            vector.append((value - scaler[name]["mean"]) / scaler[name]["std"])
-    return vector
+    return [
+        0.0 if row["features"][name] is None
+        else (row["features"][name] - scaler[name]["mean"]) / scaler[name]["std"]
+        for name in FEATURES
+    ]
+
+
+def game_weights(groups: list[dict]) -> list[float]:
+    counts: dict = {}
+    for group in groups:
+        counts[group["game_id"]] = counts.get(group["game_id"], 0) + 1
+    return [1.0 / counts[group["game_id"]] for group in groups]
+
+
+# --- conditional logit -----------------------------------------------------
 
 
 def softmax(scores: list[float]) -> list[float]:
@@ -72,26 +102,95 @@ def softmax(scores: list[float]) -> list[float]:
     return [value / total for value in exps]
 
 
-def _dot(weights: list[float], vector: list[float]) -> float:
-    return sum(w * x for w, x in zip(weights, vector))
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
 
 
-def fit(groups: list[dict], l2: float = 0.1, steps: int = 500, rate: float = 0.5) -> dict:
-    """Full-batch gradient descent on the mean conditional-logit loss plus L2."""
+def objective(beta: list[float], data: list, weights: list[float], l2: float, hessian: bool = False):
+    """Loss, gradient, and optionally Hessian of the weighted penalized NLL."""
+    dim = len(beta)
+    total = sum(weights)
+    loss = 0.5 * l2 * _dot(beta, beta)
+    grad = [l2 * b for b in beta]
+    hess = [[l2 if i == j else 0.0 for j in range(dim)] for i in range(dim)] if hessian else None
+    for (vectors, label), weight in zip(data, weights):
+        w = weight / total
+        probs = softmax([_dot(beta, vector) for vector in vectors])
+        loss -= w * math.log(max(probs[label], 1e-300))
+        mean = [sum(p * vector[j] for p, vector in zip(probs, vectors)) for j in range(dim)]
+        for j in range(dim):
+            grad[j] += w * (mean[j] - vectors[label][j])
+        if hessian:
+            for p, vector in zip(probs, vectors):
+                for i in range(dim):
+                    for j in range(dim):
+                        hess[i][j] += w * p * vector[i] * vector[j]
+            for i in range(dim):
+                for j in range(dim):
+                    hess[i][j] -= w * mean[i] * mean[j]
+    return loss, grad, hess
+
+
+def _solve(matrix: list[list[float]], rhs: list[float]) -> list[float]:
+    """Gaussian elimination with partial pivoting."""
+    n = len(rhs)
+    a = [row[:] + [rhs[i]] for i, row in enumerate(matrix)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(a[r][col]))
+        a[col], a[pivot] = a[pivot], a[col]
+        for r in range(col + 1, n):
+            factor = a[r][col] / a[col][col]
+            for c in range(col, n + 1):
+                a[r][c] -= factor * a[col][c]
+    x = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        x[r] = (a[r][n] - sum(a[r][c] * x[c] for c in range(r + 1, n))) / a[r][r]
+    return x
+
+
+def fit(groups: list[dict], l2: float = DEFAULT_L2, tol: float = TOL, max_iter: int = MAX_ITER) -> dict:
+    """Newton's method with Armijo backtracking. Scaler is fit on ``groups`` only."""
+    if l2 <= 0:
+        raise ValueError("l2 must be positive so the objective is strictly convex")
     scaler = fit_scaler(groups)
     data = [([vectorize(row, scaler) for row in group["rows"]], group["label"]) for group in groups]
-    weights = [0.0] * len(FEATURES)
-    for _ in range(steps):
-        grad = [l2 * w for w in weights]
-        for vectors, label in data:
-            probs = softmax([_dot(weights, vector) for vector in vectors])
-            for vector, prob in zip(vectors, probs):
-                for j, x in enumerate(vector):
-                    grad[j] += prob * x / len(data)
-            for j, x in enumerate(vectors[label]):
-                grad[j] -= x / len(data)
-        weights = [w - rate * g for w, g in zip(weights, grad)]
-    return {"features": list(FEATURES), "weights": weights, "scaler": scaler, "l2": l2, "steps": steps}
+    weights = game_weights(groups)
+    beta = [0.0] * len(FEATURES)
+    history = []
+    converged = False
+    for iteration in range(max_iter + 1):
+        loss, grad, hess = objective(beta, data, weights, l2, hessian=True)
+        grad_norm = max(abs(g) for g in grad)
+        history.append({"iteration": iteration, "loss": loss, "grad_max": grad_norm})
+        if grad_norm < tol:
+            converged = True
+            break
+        if iteration == max_iter:
+            break
+        step = _solve(hess, [-g for g in grad])
+        slope = _dot(grad, step)
+        size = 1.0
+        while size > 1e-10:
+            trial = [b + size * s for b, s in zip(beta, step)]
+            if objective(trial, data, weights, l2)[0] <= loss + 1e-4 * size * slope:
+                break
+            size *= 0.5
+        beta = trial
+    return {
+        "features": list(FEATURES),
+        "weights": beta,
+        "scaler": scaler,
+        "l2": l2,
+        "optimizer": {
+            "method": "newton_armijo",
+            "converged": converged,
+            "iterations": history[-1]["iteration"],
+            "final_loss": history[-1]["loss"],
+            "final_grad_max": history[-1]["grad_max"],
+            "tol": tol,
+            "loss_trace": [round(item["loss"], 10) for item in history],
+        },
+    }
 
 
 def predict(model: dict, group: dict) -> list[float]:
@@ -99,12 +198,15 @@ def predict(model: dict, group: dict) -> list[float]:
     return softmax([_dot(model["weights"], vector) for vector in vectors])
 
 
+# --- baselines and metrics -------------------------------------------------
+
+
 def uniform_baseline(group: dict) -> list[float]:
     return [1.0 / len(group["rows"])] * len(group["rows"])
 
 
 def players_baseline(group: dict) -> list[float]:
-    """All probability on the teams with the most standing players, split evenly."""
+    """All probability on the squads with the most standing players, split evenly."""
     counts = [
         row["features"]["players_alive"] + row["features"]["players_downed"]
         for row in group["rows"]
@@ -114,70 +216,214 @@ def players_baseline(group: dict) -> list[float]:
     return [1.0 / tied if count == best else 0.0 for count in counts]
 
 
+METHODS = {"model": None, "uniform": uniform_baseline, "most_players": players_baseline}
+
+
 def score(probs: list[float], label: int) -> dict:
-    """Log loss, and top-1 credit split evenly across tied top scores."""
+    """Log loss, multi-class Brier score, and top-1 credit split across ties."""
     top = max(probs)
     tied = [i for i, prob in enumerate(probs) if prob == top]
     return {
         "log_loss": -math.log(max(probs[label], 1e-15)),
+        "brier": sum((p - (1.0 if i == label else 0.0)) ** 2 for i, p in enumerate(probs)),
         "top1": (1.0 / len(tied)) if label in tied else 0.0,
     }
 
 
-def _summarize(scored: list[dict]) -> dict:
+def _mean(items: list[dict], weights: list[float], method: str, metric: str) -> float:
+    return sum(w * item[method][metric] for item, w in zip(items, weights)) / sum(weights)
+
+
+def summarize(scored: list[dict]) -> dict:
+    """Game-weighted (primary) and checkpoint-weighted means."""
     if not scored:
-        return {"n": 0}
-    out = {"n": len(scored)}
-    for method in ("model", "uniform", "most_players"):
-        out[method] = {
-            "log_loss": sum(item[method]["log_loss"] for item in scored) / len(scored),
-            "top1": sum(item[method]["top1"] for item in scored) / len(scored),
+        return {"groups": 0}
+    per_game = game_weights(scored)
+    flat = [1.0] * len(scored)
+    out = {"groups": len(scored), "games": len({item["game_id"] for item in scored})}
+    for label, weights in (("game_weighted", per_game), ("checkpoint_weighted", flat)):
+        out[label] = {
+            method: {metric: _mean(scored, weights, method, metric) for metric in ("log_loss", "brier", "top1")}
+            for method in METHODS
         }
     return out
 
 
-def leave_one_game_out(groups: list[dict], **fit_args) -> dict:
-    games = sorted({group["game_id"] for group in groups}, key=str)
+def calibration(scored: list[dict]) -> dict:
+    """Game-weighted reliability bins over every squad's predicted probability."""
+    games = len({item["game_id"] for item in scored})
+    if games < MIN_CALIBRATION_GAMES:
+        return {"status": "insufficient_data", "games": games, "required": MIN_CALIBRATION_GAMES}
+    weights = game_weights(scored)
+    bins = [{"weight": 0.0, "p": 0.0, "won": 0.0, "rows": 0, "games": set()} for _ in range(CALIBRATION_BINS)]
+    for item, weight in zip(scored, weights):
+        for index, prob in enumerate(item["probs"]):
+            slot = bins[min(int(prob * CALIBRATION_BINS), CALIBRATION_BINS - 1)]
+            slot["weight"] += weight
+            slot["p"] += weight * prob
+            slot["won"] += weight * (1.0 if index == item["label"] else 0.0)
+            slot["rows"] += 1
+            slot["games"].add(item["game_id"])
+    total = sum(slot["weight"] for slot in bins)
+    table = []
+    ece = 0.0
+    for index, slot in enumerate(bins):
+        if not slot["weight"]:
+            continue
+        mean_p = slot["p"] / slot["weight"]
+        observed = slot["won"] / slot["weight"]
+        ece += slot["weight"] / total * abs(mean_p - observed)
+        table.append(
+            {
+                "bin": [index / CALIBRATION_BINS, (index + 1) / CALIBRATION_BINS],
+                "mean_predicted": mean_p,
+                "observed_win_rate": observed,
+                "squad_rows": slot["rows"],
+                "games": len(slot["games"]),
+            }
+        )
+    return {"status": "ok", "games": games, "ece_game_weighted": ece, "bins": table}
+
+
+def by_elapsed(scored: list[dict], width: int = 300) -> dict:
+    buckets: dict[int, list[dict]] = {}
+    for item in scored:
+        buckets.setdefault(item["elapsed"] // width, []).append(item)
+    return {f"{key * width}-{(key + 1) * width}s": summarize(items) for key, items in sorted(buckets.items())}
+
+
+def score_groups(model: dict, groups: list[dict]) -> list[dict]:
     scored = []
-    for held in games:
-        train = [group for group in groups if group["game_id"] != held]
-        test = [group for group in groups if group["game_id"] == held]
-        model = fit(train, **fit_args)
-        for group in test:
-            scored.append(
-                {
-                    "game_id": held,
-                    "t": group["t"],
-                    "checkpoint": group["checkpoint"],
-                    "teams": len(group["rows"]),
-                    "model": score(predict(model, group), group["label"]),
-                    "uniform": score(uniform_baseline(group), group["label"]),
-                    "most_players": score(players_baseline(group), group["label"]),
-                }
-            )
-    by_checkpoint = {}
-    for index in sorted({item["checkpoint"] for item in scored}):
-        by_checkpoint[str(index)] = _summarize([item for item in scored if item["checkpoint"] == index])
+    for group in groups:
+        probs = predict(model, group)
+        item = {
+            "game_id": group["game_id"],
+            "session_id": group.get("session_id"),
+            "t": group["t"],
+            "elapsed": group["elapsed"],
+            "squads": len(group["rows"]),
+            "label": group["label"],
+            "probs": probs,
+            "model": score(probs, group["label"]),
+        }
+        for name, baseline in METHODS.items():
+            if baseline:
+                item[name] = score(baseline(group), group["label"])
+        scored.append(item)
+    return scored
+
+
+def evaluation_report(scored: list[dict]) -> dict:
     return {
-        "method": "leave_one_game_out",
-        "folds": len(games),
-        "overall": _summarize(scored),
-        "by_checkpoint": by_checkpoint,
+        "primary": "game_weighted log_loss; uniform is the reference baseline",
+        "overall": summarize(scored),
+        "by_elapsed": by_elapsed(scored),
+        "calibration": calibration(scored),
     }
 
 
-def _number_checkpoints(groups: list[dict]) -> None:
-    """Checkpoint index within its game, 0 at the start of Playing."""
-    by_game: dict = {}
-    for group in groups:
-        by_game.setdefault(group["game_id"], []).append(group)
-    for items in by_game.values():
-        times = sorted(item["t"] for item in items)
-        for item in items:
-            item["checkpoint"] = times.index(item["t"])
+# --- splits ----------------------------------------------------------------
 
 
-def run(data_dir: Path, out_dir: Path, min_games: int, checkpoints: int, **fit_args) -> dict:
+def session_split(groups: list[dict], session_order: list) -> dict | None:
+    """Oldest sessions train, then validation, newest test. ``None`` if too thin."""
+    sessions = [s for s in session_order if any(g["session_id"] == s for g in groups)]
+    if len(sessions) < MIN_SESSIONS:
+        return None
+    n_test = max(1, round(0.2 * len(sessions)))
+    n_val = max(1, round(0.2 * len(sessions)))
+    if len(sessions) - n_test - n_val < 1:
+        return None
+    split = {
+        "train": sessions[: len(sessions) - n_test - n_val],
+        "validation": sessions[len(sessions) - n_test - n_val : len(sessions) - n_test],
+        "test": sessions[len(sessions) - n_test :],
+    }
+    games = {
+        name: {g["game_id"] for g in groups if g["session_id"] in members}
+        for name, members in split.items()
+    }
+    if len(games["test"]) < MIN_TEST_GAMES or len(games["validation"]) < MIN_VALIDATION_GAMES:
+        return None
+    return split
+
+
+def _non_converged(models: list[dict]) -> list[dict]:
+    return [m["optimizer"] for m in models if not m["optimizer"]["converged"]]
+
+
+def evaluate_by_session(groups: list[dict], split: dict) -> dict:
+    part = {name: [g for g in groups if g["session_id"] in members] for name, members in split.items()}
+    fits = []
+    selection = []
+    for l2 in L2_GRID:
+        model = fit(part["train"], l2=l2)
+        fits.append(model)
+        val = summarize(score_groups(model, part["validation"]))
+        selection.append({"l2": l2, "validation_log_loss": val["game_weighted"]["model"]["log_loss"]})
+    chosen = min(selection, key=lambda item: item["validation_log_loss"])["l2"]
+    final = fit(part["train"] + part["validation"], l2=chosen)
+    fits.append(final)
+    result = {
+        "method": "session_split",
+        "sessions": split,
+        "games": {name: len({g["game_id"] for g in items}) for name, items in part.items()},
+        "l2_selection": selection,
+        "l2": chosen,
+        "preprocessing_fit_on": "train for selection; train+validation for the test model",
+        "optimizer": final["optimizer"],
+    }
+    bad = _non_converged(fits)
+    if bad:
+        return {**result, "status": "not_converged", "non_converged": bad}
+    result["test"] = evaluation_report(score_groups(final, part["test"]))
+    result["status"] = "ok"
+    return result
+
+
+def leave_one_game_out(groups: list[dict], l2: float = DEFAULT_L2) -> dict:
+    games = sorted({group["game_id"] for group in groups}, key=str)
+    scored = []
+    fits = []
+    for held in games:
+        model = fit([g for g in groups if g["game_id"] != held], l2=l2)
+        fits.append(model)
+        scored.extend(score_groups(model, [g for g in groups if g["game_id"] == held]))
+    result = {
+        "method": "game_held_out_weaker",
+        "warning": (
+            "Games are held out one at a time, but held-out games share sessions, "
+            "lobbies, and teams with training games. This is a weaker test than a "
+            "session split and likely optimistic. l2 is fixed, not tuned."
+        ),
+        "folds": len(games),
+        "l2": l2,
+        "preprocessing_fit_on": "each fold's training games",
+        "optimizer_iterations": [m["optimizer"]["iterations"] for m in fits],
+    }
+    bad = _non_converged(fits)
+    if bad:
+        return {**result, "status": "not_converged", "non_converged": bad}
+    result["test"] = evaluation_report(scored)
+    result["status"] = "ok"
+    return result
+
+
+# --- driver ----------------------------------------------------------------
+
+
+def _session_order(records: list[dict]) -> list:
+    """Sessions oldest first by earliest ``match_start``; unknown times last."""
+    first: dict = {}
+    for record in records:
+        start = record.get("match_start")
+        start = float(start) if isinstance(start, (int, float)) and not isinstance(start, bool) else math.inf
+        session = record.get("session_id")
+        first[session] = min(first.get(session, math.inf), start)
+    return sorted(first, key=lambda s: (first[s], str(s)))
+
+
+def run(data_dir: Path, out_dir: Path, min_games: int, step: int = CHECKPOINT_STEP) -> dict:
     if min_games < MIN_GAMES_FLOOR:
         raise SystemExit(f"--min-games cannot be below {MIN_GAMES_FLOOR}")
     records, inventory = load_accepted(data_dir)
@@ -185,6 +431,7 @@ def run(data_dir: Path, out_dir: Path, min_games: int, checkpoints: int, **fit_a
         "generated_at": _now(),
         "data_dir": data_dir.as_posix(),
         "min_games": min_games,
+        "checkpoint_step_s": step,
         "inventory": inventory,
         "evaluation": None,
         "model_path": None,
@@ -194,28 +441,38 @@ def run(data_dir: Path, out_dir: Path, min_games: int, checkpoints: int, **fit_a
         report["detail"] = f"{len(records)} usable accepted games; {min_games} required"
         return report
 
-    groups, dropped = build_dataset(records, checkpoints)
-    _number_checkpoints(groups)
+    groups, dropped, diagnostics = build_dataset(records, data_dir, step)
     games = sorted({group["game_id"] for group in groups}, key=str)
     report["dataset"] = {
-        "games_with_rows": len(games),
+        "games_with_groups": len(games),
         "checkpoint_groups": len(groups),
-        "team_rows": sum(len(group["rows"]) for group in groups),
-        "dropped_games": dropped,
-        "sessions": sorted({str(group.get("session_id")) for group in groups}),
+        "squad_rows": sum(len(group["rows"]) for group in groups),
+        "dropped": dropped,
+        "eligibility": diagnostics,
+        "sessions": sorted({str(group["session_id"]) for group in groups}),
     }
     if len(games) < min_games:
         report["status"] = "insufficient_data"
-        report["detail"] = f"{len(games)} games produced labeled rows; {min_games} required"
+        report["detail"] = f"{len(games)} games produced labeled groups; {min_games} required"
         return report
 
-    report["evaluation"] = leave_one_game_out(groups, **fit_args)
-    model = fit(groups, **fit_args)
-    model["trained_on_games"] = games
-    model["checkpoints_per_game"] = checkpoints
+    split = session_split(groups, _session_order(records))
+    evaluation = evaluate_by_session(groups, split) if split else leave_one_game_out(groups)
+    report["evaluation"] = evaluation
+    if evaluation["status"] != "ok":
+        report["status"] = evaluation["status"]
+        return report
+
+    final = fit(groups, l2=evaluation["l2"])
+    if not final["optimizer"]["converged"]:
+        report["status"] = "not_converged"
+        report["detail"] = "final fit on all games"
+        return report
+    final["trained_on_games"] = games
+    final["checkpoint_step_s"] = step
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / "model.json"
-    model_path.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
+    model_path.write_text(json.dumps(final, indent=2) + "\n", encoding="utf-8")
     report["model_path"] = model_path.as_posix()
     report["status"] = "trained"
     return report
@@ -226,22 +483,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--out-dir", type=Path, default=Path("data/models"))
     parser.add_argument("--min-games", type=int, default=MIN_GAMES)
-    parser.add_argument("--checkpoints", type=int, default=3, help="Playing checkpoints per game (default 3)")
-    parser.add_argument("--l2", type=float, default=0.1)
-    parser.add_argument("--steps", type=int, default=500)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    report = run(
-        args.data_dir,
-        args.out_dir,
-        args.min_games,
-        args.checkpoints,
-        l2=args.l2,
-        steps=args.steps,
-    )
+    report = run(args.data_dir, args.out_dir, args.min_games)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     report_path = args.out_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -252,12 +499,15 @@ def main(argv: list[str] | None = None) -> int:
         f"{inventory['usable']} usable"
     )
     print(f"status: {report['status']}" + (f" ({report['detail']})" if report.get("detail") else ""))
-    if report["evaluation"]:
-        overall = report["evaluation"]["overall"]
-        for method in ("model", "most_players", "uniform"):
+    evaluation = report.get("evaluation") or {}
+    if evaluation.get("status") == "ok":
+        print(f"evaluation: {evaluation['method']}")
+        overall = evaluation["test"]["overall"]["game_weighted"]
+        for method in METHODS:
+            values = overall[method]
             print(
-                f"  {method:12s} log_loss {overall[method]['log_loss']:.3f} "
-                f"top1 {overall[method]['top1']:.3f}  (n={overall['n']})"
+                f"  {method:12s} log_loss {values['log_loss']:.3f} "
+                f"brier {values['brier']:.3f} top1 {values['top1']:.3f}"
             )
     print(f"report: {report_path.as_posix()}")
     return 0 if report["status"] == "trained" else 2

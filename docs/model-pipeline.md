@@ -1,75 +1,126 @@
 # Model pipeline
 
-`features.py` turns accepted games into per-team rows at Playing checkpoints. `train_model.py` fits a winner model on those rows and evaluates it on held-out games. Both use the existing decoder (`overstat_patch.replay`) and the collector's acceptance rules (`collection.winning_squad`) unchanged.
+`features.py` turns accepted games into per-squad rows at fixed 30-second Playing checkpoints. `train_model.py` fits a conditional-logit winner model and evaluates it on held-out data. Both use the decoder (`overstat_patch`) and the collector's winner verification (`collection.resolve_winner`, `collect_matches.stats_game_for`) without changing them.
 
 ## Status (2026-11-14)
 
-**No model has been trained. No evaluation results exist.** The data check found no `data/collection/manifest.json` in this worktree and no raw timeseries. The collection trial in HANDOFF.md accepted 0 of 6 games in session 23231. `train_model.py` therefore stops with `status: insufficient_data` and writes no metrics.
+**No model has been trained and no evaluation results exist.** On this machine there is no `data/` directory in either worktree, and no `*.timeseries.json` file anywhere on disk. HANDOFF.md (after d19072d) records 0 accepted games: four downloaded games have verified winners, but all four are below quality 7.0. `train_model.py` stops with `status: insufficient_data` and exit code 2. No extraction smoke test on real data has been run yet. The synthetic tests check the mechanics only. They are not evidence of model performance.
 
-## Data in
+## Input contract
 
-Only manifest records with `acceptance_status == "accepted"` are used, so the quality ≥ 7.0 gate and replay validation are inherited from collection. The raw file is found from `download_path`, then from `data/raw/<livedata_id>.timeseries.json`. Records whose `sha256` repeats an earlier record are dropped as duplicate payloads. An accepted record without a raw file is listed in the report, not silently skipped.
+`train_model.py --data-dir DATA` reads:
 
-Quality score is not a feature.
+| Input | Required content |
+| --- | --- |
+| `DATA/collection/manifest.json` | `{"games": {<id>: record}}` |
+| record `acceptance_status` | `"accepted"`. Every other value is ignored. |
+| record `validation.winner` | `teamId` (not null), `teamName`, `label_source` containing `stats.games[id].teams.overall_stats.teamPlacement`. A label without that standings source is not used. |
+| record `game_id`, `session_id` | Group and split keys |
+| record `match_start` | Orders sessions oldest to newest. Missing values sort last. |
+| record `sha256` | Duplicate-payload check. A record without it is used, and listed under `accepted_missing_sha256`. |
+| record `download_path` or `livedata_id` | Raw file at `download_path` (relative to the collector's cwd), else `DATA/raw/<livedata_id>.timeseries.json` |
+| `DATA/collection/cache/stats-<session_id>.json` | That session's standings, read with `collect_matches.stats_game_for` (matched by game `id`). Without it the game is dropped. |
+| raw timeseries | `{"series": [...]}`, which the decoder replays |
 
-## Rows and labels
+Quality score is not read. Acceptance already applied the quality ≥ 7.0 rule.
 
-For each game the decoder replays the series. Checkpoints are the decoder's `default_checkpoints` (start, midpoint, end of Playing); `--checkpoints N` spaces N evenly over the same span.
+## Label
 
-One **group** is one checkpoint of one game. Its rows are the teams with at least one player not `eliminated` or `dead` (a player with unknown status counts as standing). The label is the team that `winning_squad` finds in the final reconstructed state. Team identity is `teamId`, else `teamName`.
+The label is the manifest's verified winner `teamId`. The pipeline cross-checks it the same way collection verified it: it replays the game, calls `resolve_winner(final_state, stats_game)` with this game's standings, and requires the same `teamId`. When standings are missing, `resolve_winner` falls back to the replay-only survivor rule, so the pipeline drops those games (`standings_missing_for_cross_check`) instead of accepting that fallback. A mismatch drops the game (`winner_cross_check_failed`).
 
-A game is dropped when the outcome is unknown, the replay has patch failures, or the recomputed winner disagrees with the manifest's `validation.winner`. A checkpoint is dropped when the winner is not among its standing teams.
+## Checkpoints
 
-Every feature comes from `export_players` at the checkpoint `t`. A later write cannot change a row; `tests/test_features.py` checks this.
+The replay runs once, frame by frame, with the decoder's `apply_frame` and `export_players`. A test checks these snapshots against `overstat_patch.replay`.
+
+- `start` is the first frame whose reconstructed `state` is `Playing`.
+- Checkpoints are `start + 30k` for k = 0, 1, 2, and so on.
+- The grid stops at the first frame where `state != "Playing"` or `teamsAlive <= 1`. That frame and everything after it produce no checkpoints.
+
+Both stop signals are visible at the frame where they occur, so a live predictor would see them too. Match length never selects a checkpoint: a 100-second game and a 400-second game have identical snapshots at 10, 40, and 70. A test checks this.
+
+`elapsed = t - start` is stored on each group for reporting. It is not a feature, because a value that's the same for every squad in a group cancels out of a conditional logit.
+
+## Squad eligibility
+
+**Every squad (`teamId`) present in the snapshot is a candidate.** No squad is excluded because of player statuses.
+
+Why: the status strings are `alive`, `downed`, `eliminated`, and `dead`. Their meaning is not defined by the decoder or the patcher. Collection evidence argues against reading `eliminated`/`dead` as "squad is out": in the three trial replays with standings-verified winners, the survivor rule found no squad with a non-`eliminated`/`dead` player at the end. So a winning squad can carry those statuses. Excluding squads with zero standing players could therefore drop the eventual winner. Instead:
+
+- **Downed players** count as standing (`players_downed`). Being downed is not elimination.
+- **`eliminated` / `dead`** both count toward `players_out`. Whether either one means respawnable (banner or beacon) or permanently out is **unverified**, so they are not split into separate meanings.
+- **Respawn:** a player can go from `dead` back to `alive`. Nothing removes the squad, and the next checkpoint reads the new status. A test covers this with a winner who is `dead` at one checkpoint and alive later.
+- **Squads with no standing player** are kept, with `no_standing = 1`. The model can learn how much that matters. The report records how often it happens for the eventual winner (`dataset.eligibility[game].winner_no_standing`). This is the evidence needed before any exclusion rule is adopted.
+- **Unknown status** counts toward `players_status_unknown`. It is neither standing nor out.
+- **Players without a `teamId`** are not assigned to any squad.
+
+Every group contains its verified winner. If the winner's `teamId` is missing from a snapshot, that checkpoint is skipped and listed (`winner_not_in_snapshot`). It is never relabeled.
+
+Uncertain until real data is inspected: whether `teamPlacement` written during play marks squad elimination, and whether the trial's end-of-game `eliminated`/`dead` statuses on winners are a post-match artifact.
+
+## Features
+
+Each feature varies between squads within one group.
 
 | Feature | Meaning |
 | --- | --- |
-| `progress` | `(t - playing_start) / (playing_end - playing_start)` |
-| `teams_standing` | Candidate teams in this group |
-| `players_alive`, `players_downed`, `players_out` | Status counts for the team |
-| `alive_frac` | `players_alive / team size` |
-| `hp_frac` | (health + shields) / (max health + max shields) over standing players with all four values known; unknown when none are |
-| `stale_pos_frac` | Standing players whose x or y is unknown or last written more than 30 s before `t` |
-| `center_dist_rel` | Distance from the team's horizontal centroid to the centroid of all other standing teams, divided by the group mean |
-| `spread_rel` | Mean distance of the team's players from its centroid, divided by the group mean |
-| `*_missing` | 1 when the matching value is unknown |
+| `players_alive`, `players_downed`, `players_out`, `players_status_unknown` | Status counts for the squad |
+| `no_standing` | 1 if no player is `alive` or `downed` |
+| `hp_frac` (+ `_missing`) | (health + shields) / (max health + max shields) over standing players with all four values known |
+| `stale_pos_frac` | Standing players whose x or y is unknown or last written more than 30 s before `t`. Unknown when no player is standing. |
+| `center_dist_rel` (+ `_missing`) | Distance from the squad's standing centroid to the centroid of the other squads, divided by the group mean |
+| `spread_rel` (+ `_missing`) | Mean distance of standing players from the squad centroid, divided by the group mean |
 
-Coordinate units are undefined, so distances are only compared within a snapshot, and `z` is not used.
+Coordinate units are undefined, so distances are compared only within one snapshot, and `z` is not used.
 
-## Model
+## Model and optimization
 
-Conditional logit: each team scores `w · x`; win probabilities are the softmax within the group. L2-regularized, full-batch gradient descent, standard library only. Unknown values are imputed to the training-fold mean after standardization (that is, 0), with the `*_missing` indicator carrying the fact that it was unknown.
+Conditional logit: `P(squad i wins | group) = softmax_i(w · x_i)`.
+
+Objective: the game-weighted mean negative log-likelihood plus `l2/2 · |w|²`. Each group is weighted `1 / (groups in its game)`, so every game contributes once. With `l2 > 0` the objective is strictly convex and has a single minimum. `fit` refuses `l2 <= 0`.
+
+Preprocessing: per-feature mean and standard deviation over the training rows only. Unknown values become 0 after scaling (the training mean); the `_missing` flag records that the value was unknown.
+
+Optimizer: Newton's method with an exact Hessian and Armijo backtracking. It stops when `max|gradient| < 1e-6`, with at most 100 iterations. Every fit records `converged`, `iterations`, `final_grad_max`, and the loss trace. If any fit does not converge, the report status is `not_converged`, and no metrics or model are written.
+
+Verification (`tests/test_train_model.py`):
+- The analytic gradient and Hessian match finite differences.
+- The loss trace never rises, and the gradient ends below tolerance.
+- Nudging any weight away from the solution increases the objective.
+- On 3,000 groups drawn from a known conditional logit, the fit recovers the true weight within 10%, and calibration error is under 0.03. This tests the estimator. It says nothing about real matches.
+
+The softmax summing to 1 does not make the probabilities calibrated. Calibration is measured separately, on held-out data (below).
 
 ## Evaluation
 
-Leave-one-game-out. All checkpoints of a game sit in one fold, and the scaler and weights are fit on the other games only. Reported per checkpoint index and overall:
+**Preferred: session split.** Sessions are ordered by earliest `match_start`. The newest ~20% are test, the next ~20% validation, and the rest train, with at least one session each. `l2` is chosen from {0.01, 0.1, 1.0} by validation log loss, using a model fit on train only. The test model is then refit on train + validation and scored once on test. This requires at least 3 sessions, at least 5 test games, and at least 3 validation games.
 
-- `log_loss` of the winner's probability
-- `top1`: winner has the highest probability, with credit split across ties
+**Fallback: `game_held_out_weaker`.** This leave-one-game-out evaluation runs only when a session split isn't possible. `l2` is fixed at 0.1, and preprocessing is refit for every fold. The report carries a warning that held-out games share sessions, lobbies, and teams with training games, so the result is likely optimistic.
 
-Two baselines are scored on the same groups: `uniform` over standing teams, and `most_players` (all mass on the teams with the most standing players).
+Metrics on the test predictions:
+- **Primary:** game-weighted log loss, compared against **uniform** probabilities over the group's candidate squads.
+- Also: Brier score (multi-class, `Σ (p_i − y_i)²`) and top-1 accuracy (credit split across ties), plus the `most_players` heuristic baseline.
+- Each metric is reported game-weighted (primary) and checkpoint-weighted (labeled), and broken down by `elapsed` in 5-minute buckets.
+- Calibration: 10 equal-width bins over every squad's probability. Each bin reports game-weighted mean prediction, observed win rate, rows, and games, plus game-weighted ECE. Reported only when at least 20 games are evaluated; otherwise `insufficient_data`.
 
 ### Minimum data
 
-Training and evaluation need at least **20** games that produce labeled rows (`--min-games`, never below 5). Below that, the report has `status: insufficient_data`, `evaluation: null`, no `model.json`, and the exit code is 2. At 20 games one game still moves top-1 by 5 points, so results near the bar should be read with that in mind.
-
-Games are the independent unit. Games from one session share teams and lobbies, so they are not fully independent; the report lists `sessions`. HANDOFF.md notes 50 accepted games will need more than one session.
+Training needs at least 20 usable games that produce labeled groups (`--min-games`, never below 5). Below that, nothing is fit, `evaluation` is null, no `model.json` is written, and the exit code is 2. Tests use 5 or 6 synthetic games to exercise the code paths. The default bar was not lowered.
 
 ## Commands
 
 ```sh
 python3 -m unittest tests.test_features tests.test_train_model -q
-python3 train_model.py                       # data/ -> data/models/report.json
-python3 train_model.py --checkpoints 5 --min-games 30
+python3 train_model.py                  # DATA=data -> data/models/report.json
 ```
 
-Outputs, both under the git-ignored `data/models/`: `report.json` (always) with the inventory, dataset counts, dropped games, and evaluation; `model.json` (only when trained) with feature names, weights, scaler, and trained game ids.
+`report.json` is always written. It contains the inventory, dataset counts, dropped games with reasons, eligibility diagnostics, evaluation, and optimizer state. `model.json` is written only when status is `trained`.
 
-## Interface notes for collection
+## Notes for collection
 
-No decoder or collector change is required for this pipeline to run. Requests that would help:
+No collector or decoder change is required. Points the pipeline depends on:
 
-1. **Winner coverage.** `winning_squad` needs `teamsAlive == 1` and exactly one non-out team. Three of three new replays in the trial failed this (`outcome_unknown`). Until the collector can identify more winners, almost nothing reaches the model.
-2. **`download_path` is relative to the collector's working directory.** `features.raw_path` falls back to `data_dir/raw/<livedata_id>.timeseries.json`. A path relative to `data_dir`, or the fixed layout documented as the contract, would remove the guess.
-3. **`validation.winner` carries `teamId`/`teamName`.** The pipeline cross-checks it against its own replay. Keep those field names stable.
-4. **`sha256` on every accepted record.** Duplicate-payload detection depends on it; a record without it is never treated as a duplicate.
+1. Keep `validation.winner.label_source` naming the standings source, and keep `teamId`. Labels without it are skipped.
+2. Keep the stats cache at `collection/cache/stats-<session_id>.json` under the data directory. Cross-checking needs it.
+3. `download_path` is relative to the collector's cwd. The pipeline falls back to `data/raw/<livedata_id>.timeseries.json`.
+4. Write `sha256` on every accepted record.
+5. Collecting from more than one session is what makes the session split possible.
