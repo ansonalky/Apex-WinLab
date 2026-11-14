@@ -25,7 +25,7 @@ Field: `games[].analytics.qualityScore` on `GET https://overstat.gg/api/stats/23
 
 New files, bytes unchanged, 12:28 PM PT: `cbe8db3d-0a4a-4479-828a-4c92965ad8b7` sha256 `eb60f9415bd9…`, `7c8ac260-c90c-48a2-aa04-200fed795756` sha256 `632f46fd048d…`, `220adc2c-fcb3-46be-9f96-c50d5cee8aaf` sha256 `1408069079fd…`. Manifest: `data/collection/manifest.json`. The milestone 1 raw file was not modified.
 
-The three new replays reconstructed. Playing checkpoints had positions and team ids (58 or 60 players). Raw series still includes the frontend-omitted last `t`. Winner rule failed: `teamsAlive == 1` but no single non-eliminated, non-dead team. `teamPlacement` was not used. The cached sample did identify one such squad, then quality excluded it.
+The three new replays reconstructed. Playing checkpoints had positions and team ids (58 or 60 players). Raw series still includes the frontend-omitted last `t`. The survivor rule alone was `outcome_unknown` because no single non-eliminated team remained. Each game's own standings (`stats.games` matched by `id`, not list order) had one `teamPlacement == 1` squad, and that teamId and name matched the replay's placement-1 squad. Those win labels are outcome metadata only. Player rows still have no `teamPlacement`. Quality still excludes all four downloaded games. Verified labels: game 123536 and 123540 Bellevue University (13), game 123544 Campbellsville University (20), game 123550 Texas A&M Maroon (10). Source string is `replay.player.teamPlacement + stats.games[id].teams.overall_stats.teamPlacement`, plus `replay.teamsAlive` when that also agrees. A name mismatch, a second first-place team, or no replay squad stays `outcome_unknown`.
 
 ## Decoder interface
 
@@ -52,4 +52,4 @@ Explicit checks, not freshness thresholds: quality >= 7.0; a livedata payload; n
 
 ## Unresolved
 
-No game in session 23231 met 7.0, so nothing was accepted. Winner evidence is missing when every player is `eliminated` or `dead`, or when a second team is still `downed`. Coordinate units and `angles` are still undefined. The quality formula is not in the frontend.
+No game in session 23231 met 7.0, so nothing was accepted. A win label is stored only when the replay squad and that game's standings name the same team. Coordinate units and `angles` are still undefined. The quality formula is not in the frontend. Discovery is still one session; a cross-site run has not started.

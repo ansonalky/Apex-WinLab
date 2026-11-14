@@ -253,7 +253,31 @@ def fetch_telemetry(record: dict, data_dir: Path, client: Client) -> dict:
     }
 
 
-def _apply_result(record: dict, fetched: dict, minimum: float) -> None:
+def stats_game_for(record: dict, data_dir: Path) -> dict | None:
+    """Standings for this game id. Array position is not an identifier."""
+    path = data_dir / "collection" / "cache" / f"stats-{record.get('session_id')}.json"
+    if not path.exists():
+        return None
+    try:
+        stats = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    target = record.get("game_id")
+    matches = [
+        game
+        for game in (stats.get("games") or [])
+        if isinstance(game, dict) and game.get("id") == target
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _validate_payload(payload: dict, record: dict, data_dir: Path) -> dict:
+    return validate_timeseries(payload, stats_game_for(record, data_dir))
+
+
+def _apply_result(record: dict, fetched: dict, minimum: float, data_dir: Path) -> None:
     record.update({key: value for key, value in fetched.items() if key != "payload"})
     payload = fetched.get("payload")
     validation = None
@@ -261,14 +285,14 @@ def _apply_result(record: dict, fetched: dict, minimum: float) -> None:
         validation = {"ok": False, "reason": "invalid_payload", "detail": fetched["invalid"]}
         record["validation_status"] = "failed"
     elif payload is not None:
-        validation = validate_timeseries(payload)
+        validation = _validate_payload(payload, record, data_dir)
         record["validation_status"] = "passed" if validation.get("ok") else "failed"
         record["validation"] = {key: value for key, value in validation.items() if key != "ok"}
     elif record.get("download_status") == "cached":
         path = Path(fetched["download_path"])
         try:
             payload = json.loads(path.read_text(encoding="utf-8-sig"))
-            validation = validate_timeseries(payload)
+            validation = _validate_payload(payload, record, data_dir)
             record["validation_status"] = "passed" if validation.get("ok") else "failed"
             record["validation"] = {key: value for key, value in validation.items() if key != "ok"}
         except (OSError, json.JSONDecodeError) as exc:
@@ -374,7 +398,7 @@ def run_collection(
         fetched = fetch_telemetry(record, data_dir, client)
         if before in (None, "not_attempted", "failed_temporary") and fetched.get("download_status") == "downloaded":
             downloads += 1
-        _apply_result(record, fetched, minimum)
+        _apply_result(record, fetched, minimum, data_dir)
         save_manifest(data_dir, document)
     for record in merged:
         if not record.get("reason"):

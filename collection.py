@@ -138,6 +138,77 @@ def _coverage(rows: list[dict]) -> dict:
     }
 
 
+def _one_squad(groups: dict[Any, dict]) -> dict | None:
+    if len(groups) != 1:
+        return None
+    squad = next(iter(groups.values()))
+    if squad.get("teamId") is None or squad.get("name_conflict"):
+        return None
+    return {
+        "teamId": squad["teamId"],
+        "teamName": squad.get("teamName"),
+        "players": list(squad.get("players") or []),
+    }
+
+
+def _add_player(groups: dict[Any, dict], team_id: Any, team_name: Any, player_name: Any) -> None:
+    if team_id is None:
+        return
+    bucket = groups.setdefault(
+        team_id,
+        {"teamId": team_id, "teamName": None, "players": [], "name_conflict": False},
+    )
+    if team_name:
+        if bucket["teamName"] and bucket["teamName"] != team_name:
+            bucket["name_conflict"] = True
+        elif bucket["teamName"] is None:
+            bucket["teamName"] = team_name
+    if player_name:
+        bucket["players"].append(player_name)
+
+
+def replay_placement_squad(state: dict) -> dict | None:
+    """The replay's first-place squad, if exactly one teamId has teamPlacement 1."""
+    groups: dict[Any, dict] = {}
+    for player in (state.get("players") or {}).values():
+        if not isinstance(player, dict) or player.get("teamPlacement") != 1:
+            continue
+        _add_player(groups, player.get("teamId"), player.get("teamName"), player.get("name"))
+    return _one_squad(groups)
+
+
+def standings_squad(stats_game: dict | None) -> dict | None:
+    """Unique first place on this game's final standings. Not looked up by list order."""
+    if not isinstance(stats_game, dict):
+        return None
+    groups: dict[Any, dict] = {}
+    for team in stats_game.get("teams") or []:
+        if not isinstance(team, dict):
+            continue
+        placement = (team.get("overall_stats") or {}).get("teamPlacement")
+        if placement != 1:
+            continue
+        names = [
+            player.get("name")
+            for player in (team.get("player_stats") or [])
+            if isinstance(player, dict) and player.get("name")
+        ]
+        _add_player(groups, team.get("teamId"), team.get("name"), None)
+        if team.get("teamId") in groups:
+            groups[team["teamId"]]["players"] = names
+    return _one_squad(groups)
+
+
+def identities_match(left: dict | None, right: dict | None) -> bool:
+    if not left or not right:
+        return False
+    if left.get("teamId") is None or left.get("teamId") != right.get("teamId"):
+        return False
+    left_name = left.get("teamName") or ""
+    right_name = right.get("teamName") or ""
+    return not (left_name and right_name and left_name != right_name)
+
+
 def winning_squad(state: dict) -> dict | None:
     if state.get("teamsAlive") != 1:
         return None
@@ -159,7 +230,46 @@ def winning_squad(state: dict) -> dict | None:
             bucket["players"].append(player["name"])
     if len(teams) != 1:
         return None
-    return next(iter(teams.values()))
+    squad = next(iter(teams.values()))
+    return {
+        "teamId": squad["teamId"],
+        "teamName": squad.get("teamName"),
+        "players": list(squad.get("players") or []),
+    }
+
+
+def resolve_winner(state: dict, stats_game: dict | None = None) -> dict | None:
+    """Label a winner only when the replay squad and this game's standings agree.
+
+    Final placement is not copied onto player rows. The returned object is
+    outcome metadata. ``stats_game`` must be the standings for this game id.
+    """
+    survivor = winning_squad(state)
+    placed = replay_placement_squad(state)
+    if survivor and placed and not identities_match(survivor, placed):
+        return None
+    replay_squad = survivor or placed
+    if stats_game is None:
+        if survivor is None:
+            return None
+        labeled = dict(survivor)
+        labeled["label_source"] = "replay.teamsAlive"
+        return labeled
+    board = standings_squad(stats_game)
+    if replay_squad is None or board is None or not identities_match(replay_squad, board):
+        return None
+    sources = []
+    if survivor and identities_match(survivor, board):
+        sources.append("replay.teamsAlive")
+    if placed and identities_match(placed, board):
+        sources.append("replay.player.teamPlacement")
+    sources.append("stats.games[id].teams.overall_stats.teamPlacement")
+    return {
+        "teamId": replay_squad["teamId"],
+        "teamName": replay_squad.get("teamName") or board.get("teamName"),
+        "players": list(replay_squad.get("players") or []),
+        "label_source": " + ".join(sources),
+    }
 
 
 def _has_position_and_team(rows: list[dict]) -> bool:
@@ -169,7 +279,7 @@ def _has_position_and_team(rows: list[dict]) -> bool:
     return False
 
 
-def validate_timeseries(payload: dict) -> dict:
+def validate_timeseries(payload: dict, stats_game: dict | None = None) -> dict:
     """Validate one timeseries. The raw series, including its last entry, is unchanged."""
     if not isinstance(payload, dict) or not isinstance(payload.get("series"), list):
         return {"ok": False, "reason": "invalid_payload", "detail": "series array missing"}
@@ -212,7 +322,7 @@ def validate_timeseries(payload: dict) -> dict:
             "coverage": coverage,
             "playing_t": list(bounds),
         }
-    winner = winning_squad(replayed["state"])
+    winner = resolve_winner(replayed["state"], stats_game)
     last = series[-1]
     report = {
         "ok": winner is not None,
