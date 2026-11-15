@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from features import elimination_team
-from ring_features import GEOMETRY_KEYS
+from ring_features import center_xy, finite_number
 
 
 def _person(value: Any) -> tuple[Any, str | None]:
@@ -21,20 +21,25 @@ def _person(value: Any) -> tuple[Any, str | None]:
 
 
 def ring_span(entry: dict) -> dict:
-    """One live ring entry. ``end_t`` is set only when that entry records an end."""
-    start = entry.get("start")
-    end = entry.get("end")
-    start_ok = isinstance(start, (int, float)) and not isinstance(start, bool)
-    end_ok = (
-        isinstance(end, (int, float))
-        and not isinstance(end, bool)
-        and all(key in entry for key in GEOMETRY_KEYS)
+    """One live ring entry. ``end_t`` is set only when that entry records a finite end."""
+    start = finite_number(entry.get("start"))
+    end = finite_number(entry.get("end"))
+    complete = (
+        start is not None
+        and end is not None
+        and end > start
+        and center_xy(entry.get("startCenter")) is not None
+        and center_xy(entry.get("endCenter")) is not None
+        and finite_number(entry.get("startSize")) is not None
+        and entry["startSize"] >= 0
+        and finite_number(entry.get("endSize")) is not None
+        and entry["endSize"] >= 0
     )
     return {
         "stage": entry.get("stage"),
-        "start_t": int(start) if start_ok else None,
-        "end_t": int(end) if end_ok else None,
-        "end_recorded": bool(end_ok),
+        "start_t": int(start) if start is not None else None,
+        "end_t": int(end) if complete else None,
+        "end_recorded": complete,
     }
 
 

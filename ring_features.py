@@ -71,40 +71,69 @@ def live_entries(state: dict, observed: dict) -> list[dict]:
     return [entry for _seen, entry in live]
 
 
+def finite_number(value: Any) -> float | None:
+    """A real finite number. Booleans, null, strings, NaN and infinities are missing."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def center_xy(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    x, y = finite_number(value.get("x")), finite_number(value.get("y"))
+    if x is None or y is None:
+        return None
+    return x, y
+
+
+def _unknown(entry: dict, reason: str, phase: str = "closing_target_unknown") -> dict:
+    return {"known": False, "phase": phase, "stage": entry.get("stage"), "reason": reason}
+
+
 def ring_at(entries: list[dict], t: int) -> dict:
-    """Current ring from revealed entries: center, radius, phase, closing time left."""
+    """Current ring from revealed entries: center, radius, phase, closing time left.
+
+    Timestamps and geometry are used only when they are finite numbers. An
+    explicit null, a missing field, or an invalid value leaves the ring unknown.
+    No end time or target is invented.
+    """
     if not entries:
         return {"known": False, "phase": "not_revealed", "reason": "no live ring entry yet"}
     entry = entries[-1]
-    start = entry.get("start")
-    end = entry.get("end")
-    if isinstance(start, (int, float)) and t < start:
-        return {"known": False, "phase": "inconsistent", "reason": "latest live entry starts after t"}
-    if not all(key in entry for key in GEOMETRY_KEYS):
-        return {
-            "known": False,
-            "phase": "closing_target_unknown",
-            "stage": entry.get("stage"),
-            "reason": "live entry has no end time or target center",
-        }
+    start = finite_number(entry.get("start"))
+    end = finite_number(entry.get("end"))
+    start_center = center_xy(entry.get("startCenter"))
+    end_center = center_xy(entry.get("endCenter"))
+    start_size = finite_number(entry.get("startSize"))
+    end_size = finite_number(entry.get("endSize"))
+    if start is not None and t < start:
+        return _unknown(entry, "latest live entry starts after t", "inconsistent")
+    complete = None not in (start, end, start_center, end_center, start_size, end_size) and end > start and start_size >= 0 and end_size >= 0
+    if not complete:
+        return _unknown(entry, "live entry has no finite end time or target geometry")
     if t < end:
-        f = (t - start) / (end - start) if end > start else 1.0
-        sc, ec = entry["startCenter"], entry["endCenter"]
+        span = end - start
+        f = (t - start) / span
         return {
             "known": True,
             "phase": "closing",
             "stage": entry.get("stage"),
-            "center": (sc["x"] + f * (ec["x"] - sc["x"]), sc["y"] + f * (ec["y"] - sc["y"])),
-            "radius": entry["startSize"] + f * (entry["endSize"] - entry["startSize"]),
+            "center": (
+                start_center[0] + f * (end_center[0] - start_center[0]),
+                start_center[1] + f * (end_center[1] - start_center[1]),
+            ),
+            "radius": start_size + f * (end_size - start_size),
             "closing_remaining_s": end - t,
         }
-    ec = entry["endCenter"]
     return {
         "known": True,
         "phase": "waiting",
         "stage": entry.get("stage"),
-        "center": (ec["x"], ec["y"]),
-        "radius": entry["endSize"],
+        "center": end_center,
+        "radius": end_size,
         "closing_remaining_s": None,
     }
 
@@ -117,13 +146,16 @@ def ring_target(entries: list[dict], ring: dict) -> dict | None:
     the 100 local replays no target was revised after insertion, and no entry
     for the next stage exists while the ring waits. So a target is known only
     while a recorded stage closes; while waiting it is unknown, never taken
-    from the t 0 plan.
+    from the t 0 plan. Invalid coordinates are not used.
     """
     if ring.get("phase") != "closing" or not entries:
         return None
     entry = entries[-1]
-    center = entry["endCenter"]
-    return {"x": center["x"], "y": center["y"], "r": entry["endSize"], "stage": entry.get("stage")}
+    center = center_xy(entry.get("endCenter"))
+    radius = finite_number(entry.get("endSize"))
+    if center is None or radius is None or radius < 0:
+        return None
+    return {"x": center[0], "y": center[1], "r": radius, "stage": entry.get("stage")}
 
 
 def _position(row: dict) -> tuple[float, float] | None:

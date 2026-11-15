@@ -311,6 +311,7 @@ async function loadMatch(gameId) {
 }
 
 async function loadMatchBody(gameId) {
+  if (window.EventTimeline) window.EventTimeline.reset();
   const token = ++requestToken;
   if (inFlight) inFlight.controller.abort();
   inFlight = null;
@@ -1158,6 +1159,7 @@ altHighlights.addEventListener("click", (event) => {
 // Map dots, probability tables, and the squad dropdown share this path.
 // It does not seek, reset the map camera, or request an AI review.
 function applySquadSelection() {
+  if (window.EventTimeline) window.EventTimeline.reset();
   loadHighlights();
   if (!frame) return;
   draw();
