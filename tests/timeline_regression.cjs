@@ -7,9 +7,13 @@ function harness() {
   const listeners = {}, documentListeners = {}, pending = [], sought = [];
   const head = {style: {}, setAttribute(k,v) { this[k] = v; }};
   const tip = {style: {}, hidden: true, innerHTML: ''};
+  const captured = new Set();
+  const track = {getBoundingClientRect() {return {left:10,width:600};},
+    setPointerCapture(id) {captured.add(id);}, hasPointerCapture(id) {return captured.has(id);},
+    releasePointerCapture(id) {captured.delete(id);}};
   const root = {hidden: true, innerHTML: '',
     addEventListener(k, fn) { listeners[k] = fn; },
-    querySelector(s) { return s === '[data-playhead]' ? head : s === '[data-tip]' ? tip : null; },
+    querySelector(s) { return s === '[data-playhead]' ? head : s === '[data-tip]' ? tip : s === '[data-track]' ? track : null; },
     querySelectorAll() { return []; }, contains(target) { return target === this; }};
   const context = {window: {}, document: {activeElement: null,
     querySelector() {return root;}, addEventListener(k,fn) {documentListeners[k] = fn;}},
@@ -19,7 +23,7 @@ function harness() {
   const sync = (gameId=1, team=20, elapsed=10) => api.sync({gameId, team, elapsed, duration:1200, seek:t=>sought.push(t)});
   const finish = (i, markers=[], rings=[]) => pending[i].resolve({ok:true, json: async()=>({available:true, markers, rings})});
   const target = (selector, value) => ({closest(s) {return s===selector ? value : null;}});
-  return {api, sync, finish, pending, root, head, tip, sought, listeners, documentListeners, target};
+  return {api, sync, finish, pending, root, head, tip, track, captured, sought, listeners, documentListeners, target};
 }
 (async () => {
   const h = harness();
@@ -73,8 +77,62 @@ function harness() {
   assert.equal(p.sought.pop(),600);
   p.documentListeners.pointerdown({target:{}}); assert.equal(p.tip.hidden,true);
 
+  for (const pointerType of ['mouse', 'touch', 'pen']) {
+    const r=harness(); const ready=r.sync(); r.finish(0); await ready;
+    const pointer = (x, extras={}) => ({pointerId:7, isPrimary:true, pointerType, button:0,
+      clientX:x, clientY:10, target:r.target('[data-track]',r.track), ...extras});
+    r.listeners.pointerdown(pointer(310));
+    assert.equal(r.captured.has(7),true, 'pointer captured for release outside');
+    r.listeners.pointermove(pointer(460));
+    assert.equal(r.sought.at(-1),900, pointerType+' forward drag');
+    await r.sync(1,20,15);
+    assert.equal(r.head['aria-valuenow'],'900','late frame cannot move dragging playhead back');
+    r.listeners.pointermove(pointer(160));
+    assert.equal(r.sought.at(-1),300, pointerType+' backward drag');
+    r.listeners.pointermove(pointer(500,{pointerId:8,isPrimary:false}));
+    assert.equal(r.sought.at(-1),300,'another finger cannot change the scrub');
+    r.listeners.pointerup(pointer(-50,{target:r.target('',null)}));
+    assert.equal(r.sought.at(-1),0, pointerType+' release outside left clamps');
+    assert.equal(r.captured.size,0,'capture released');
+    const count=r.sought.length;
+    r.listeners.click({detail:1,target:r.target('[data-track]',r.track),clientX:400,preventDefault(){},stopPropagation(){}});
+    assert.equal(r.sought.length,count,'synthetic drag click does not seek again');
+    r.listeners.pointermove(pointer(300));
+    assert.equal(r.sought.length,count,'moving after release does not seek');
+    r.listeners.pointerdown(pointer(310)); r.listeners.pointermove(pointer(460));
+    r.listeners.pointerup(pointer(900));
+    assert.equal(r.sought.at(-1),1200,pointerType+' release outside right clamps');
+
+    r.listeners.pointerdown(pointer(310)); r.listeners.pointermove(pointer(460));
+    const beforeCancel=r.sought.length;
+    r.listeners.pointercancel(pointer(0));
+    assert.equal(r.sought.length,beforeCancel,'cancellation does not invent a final position');
+    r.listeners.pointerdown(pointer(310)); r.listeners.pointermove(pointer(160));
+    r.listeners.lostpointercapture(pointer(160));
+    const beforeLost=r.sought.length; r.listeners.pointermove(pointer(460));
+    assert.equal(r.sought.length,beforeLost,'lost capture ends scrubbing');
+    r.listeners.pointerdown(pointer(310)); r.listeners.pointermove(pointer(160));
+    r.api.reset(); assert.equal(r.captured.size,0,'selection reset releases capture');
+    const beforeReset=r.sought.length; r.listeners.pointerup(pointer(500));
+    assert.equal(r.sought.length,beforeReset,'release cannot seek the previous selection');
+  }
+  // Ordinary tick taps preserve the original capture target and overlap picker.
+  const taps=harness(); a=taps.sync();
+  taps.finish(0,[{kind:'kill',elapsed:100,text:'A'},{kind:'knock',elapsed:101,text:'B'}]); await a;
+  const tick={...taps.track,dataset:{group:'0'}};
+  const tickTarget={closest(s) {return s==='[data-track]' ? taps.track :
+    s==='[data-group], [data-playhead]' || s==='[data-group]' ? tick : null;}};
+  for (const pointerType of ['mouse','touch']) {
+    const event={pointerId:1,isPrimary:true,pointerType,button:0,clientX:60,clientY:10,target:tickTarget};
+    taps.listeners.pointerdown(event); taps.listeners.pointermove({...event,clientX:62});
+    taps.listeners.pointerup(event); taps.listeners.click({...event,detail:1});
+    assert.match(taps.tip.innerHTML,/Choose an event/);
+    assert.equal(taps.sought.length,0,'tap does not become an arbitrary track seek');
+  }
+  assert.match(fs.readFileSync('static/timeline.css','utf8'),/touch-action: none/);
+
   const d=fs.readFileSync('static/dashboard.js','utf8');
   assert.match(d,/async function loadMatchBody\(gameId\) \{\s*if \(window.EventTimeline\) window.EventTimeline.reset\(\)/);
   assert.match(d,/function applySquadSelection\(\) \{\s*if \(window.EventTimeline\) window.EventTimeline.reset\(\)/);
-  console.log('Timeline regressions passed: selection/reset races, late responses, exact seeking, overlap picker, keyboard, dismissal, ring markers.');
+  console.log('Timeline regressions passed: selection/reset races, late responses, exact seeking, overlap picker, keyboard, dismissal, ring markers, mouse/touch/pen dragging, capture, cancellation, outside release.');
 })().catch(error=>{console.error(error); process.exitCode=1;});

@@ -4,6 +4,8 @@ window.EventTimeline = (() => {
   let key = null, generation = 0, controller = null, payload = null;
   let seekTo = () => {}, shownElapsed = 0, duration = 0, groups = [];
   let activeGroup = null, pinned = false;
+  let scrub = null, suppressClick = false;
+  const SLOP = 5;
   const finite = (value) => typeof value === "number" && Number.isFinite(value);
   const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -23,6 +25,8 @@ window.EventTimeline = (() => {
   // Invalidates even requests whose fetch implementation ignores abort().
   function reset() {
     generation += 1;
+    cancelScrub();
+    suppressClick = false;
     if (controller) controller.abort();
     controller = null;
     key = null;
@@ -45,6 +49,42 @@ window.EventTimeline = (() => {
     tip.style.left = `${Math.min(100, Math.max(0, percent(group[0].elapsed)))}%`;
     tip.style.transform = `translateX(-${Math.min(100, Math.max(0, percent(group[0].elapsed)))}%)`;
     tip.hidden = false;
+  }
+
+  function releaseScrub() {
+    const previous = scrub;
+    scrub = null;
+    if (previous && previous.capture.hasPointerCapture(previous.id)) {
+      previous.capture.releasePointerCapture(previous.id);
+    }
+    return previous;
+  }
+
+  function cancelScrub() {
+    releaseScrub();
+    suppressClick = false;
+  }
+
+  function trackRect() {
+    const track = root && root.querySelector("[data-track]");
+    if (!track || !(duration > 0)) return null;
+    const rect = track.getBoundingClientRect();
+    return rect.width > 0 ? rect : null;
+  }
+
+  function elapsedAt(clientX) {
+    const rect = trackRect();
+    if (!rect) return null;
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.round(Math.max(0, Math.min(duration, ratio * duration)));
+  }
+
+  function scrubTo(clientX) {
+    const elapsed = elapsedAt(clientX);
+    if (elapsed == null) return;
+    shownElapsed = elapsed;
+    movePlayhead();
+    seekTo(elapsed);
   }
 
   function movePlayhead() {
@@ -86,7 +126,46 @@ window.EventTimeline = (() => {
   }
 
   if (root) {
+    root.addEventListener("pointerdown", (event) => {
+      if (!event.isPrimary || scrub) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (event.target.closest("[data-tip], .timeline-key")) return;
+      const track = event.target.closest("[data-track]");
+      if (!track || !(duration > 0)) return;
+      suppressClick = false;
+      // Capture the original control, so an ordinary tap still clicks its tick.
+      const capture = event.target.closest("[data-group], [data-playhead]") || track;
+      scrub = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, capture };
+      capture.setPointerCapture(event.pointerId);
+    });
+    root.addEventListener("pointermove", (event) => {
+      if (!scrub || event.pointerId !== scrub.id) return;
+      if (!scrub.moved && Math.hypot(event.clientX - scrub.x, event.clientY - scrub.y) < SLOP) return;
+      if (!scrub.moved) dismiss();
+      scrub.moved = true;
+      scrubTo(event.clientX);
+    });
+    const endScrub = (event) => {
+      if (!scrub || event.pointerId !== scrub.id) return;
+      const previous = releaseScrub();
+      if (!previous.moved) return;
+      suppressClick = true;
+      scrubTo(event.clientX);
+    };
+    root.addEventListener("pointerup", endScrub);
+    root.addEventListener("pointercancel", (event) => {
+      if (scrub && event.pointerId === scrub.id) cancelScrub();
+    });
+    root.addEventListener("lostpointercapture", (event) => {
+      if (scrub && event.pointerId === scrub.id) cancelScrub();
+    });
     root.addEventListener("click", (event) => {
+      if (suppressClick && event.detail !== 0) {
+        suppressClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const choice = event.target.closest("[data-event]");
       if (choice && activeGroup !== null) {
         const item = groups[activeGroup][Number(choice.dataset.event)];
@@ -110,6 +189,7 @@ window.EventTimeline = (() => {
       if (rect.width > 0) { dismiss(); seekTo(Math.round(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * duration)); }
     });
     root.addEventListener("pointerover", (event) => {
+      if (scrub && scrub.moved) return;
       const button = event.target.closest("[data-group]");
       if (button && !pinned) showDetails(Number(button.dataset.group));
     });
@@ -140,9 +220,13 @@ window.EventTimeline = (() => {
     const nextKey = `${options.gameId}:${options.team}`;
     if (key !== nextKey) reset();
     seekTo = options.seek || seekTo;
-    shownElapsed = finite(options.elapsed) ? options.elapsed : 0;
+    const dragging = Boolean(scrub && scrub.moved);
+    if (!dragging) shownElapsed = finite(options.elapsed) ? options.elapsed : 0;
     duration = finite(options.duration) && options.duration > 0 ? options.duration : 0;
-    if (key === nextKey) { movePlayhead(); return; }
+    if (key === nextKey) {
+      if (!dragging) movePlayhead();
+      return;
+    }
     key = nextKey;
     const mine = generation;
     controller = new AbortController();
