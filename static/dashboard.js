@@ -554,7 +554,7 @@ function renderRoster() {
       <span class="player-name" title="${esc(player.name || "")}">${textOrUnknown(player.name)}</span>
       <span class="player-status status-${esc(player.status || "unknown")}">${status}</span>
       ${meter("HP", health, player.healthMax, "hp")}
-      ${meter("SH", shields, player.shieldMax, "sh")}
+      ${meter("SH", shields, player.shieldMax, `sh shield-${player.shieldMax}`)}
     </div>`;
   }).join("")}</div>`;
 }

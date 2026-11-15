@@ -30,7 +30,10 @@ canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c33
 .bar { height: 0.45rem; background: #2c3340; border-radius: 99px; overflow: hidden; margin-top: 0.25rem; }
 .bar > span { display: block; height: 100%; }
 .hp > span { background: #e15759; }
-.sh > span { background: #4e79a7; }
+.shield-50 > span { background: #7A7A7A; }
+.shield-75 > span { background: #123C69; }
+.shield-100 > span { background: #46166B; }
+.shield-125 > span { background: #66100E; }
 .unavailable { color: #f0c674; }
 .outcome { margin: 0.6rem 0; padding: 0.5rem 0.75rem; border-left: 3px solid #8cd17d; background: #1f2a22; color: #e6ebf2; max-width: 70rem; }
 .outcome.cut { border-left-color: #f0c674; background: #2a2618; }
