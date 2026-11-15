@@ -113,4 +113,12 @@ A repeat request was served from the cache. Earlier Anthropic-era checks, which 
 - a request at the conclusion is refused;
 - fake responses exercise every validator rule.
 
+**Browser, port 5050 (Tiger Data backend), real Gemini responses, no stubs:**
+
+- Situation review at 14:15: 17.4 s, 19 distinct evidence chips, all resolved. Seeking kept working while it loaded, a chip click sought to 13:45, and the review was then labelled "inside this review's evidence window".
+- Situation review at 11:31: 18.7 s, 15 chips, all resolved.
+- Decision review at 13:47:
+  - The first real response was **rejected** by the cover/route check, and its practice takeaway was withheld. Retry was offered and no older review was shown.
+  - The retry was accepted in 28 s. Retrospective chips appeared only in the drop attribution, and the regroup marker was drawn at Alel's known position. It stayed aligned at 2.6× zoom.
+
 **Observed limitation:** the situation review has no cover/route wording check (the decision review does). One real quiet-moment recommendation said "hold cover" inside a sightline condition. Read recommendations as prompts to check the replay, not as terrain facts.
