@@ -304,3 +304,83 @@ class ExpansionPacket(unittest.TestCase):
             self.assertEqual(store.heldout(game["game_id"])["reason"], EXPANSION_REASON)
         finally:
             clear_expansion_dirs()
+
+
+class RejectionRecord(unittest.TestCase):
+    env = {"COACH_PROVIDER": "anthropic", "COACH_MODEL": "test-model", "ANTHROPIC_API_KEY": "x"}
+
+    def test_rejected_response_is_kept_for_review_and_never_cached(self):
+        bad = good_analysis()
+        bad["factors"][0]["interpretation"] = "Teammates can share cover there."
+        with tempfile.TemporaryDirectory() as tmp:
+            c = Coach(Path(tmp) / "coach_cache", call=lambda config, request: (bad, {"served_model": "test-model"}), env=self.env)
+            result = c.analyze(tiny_packet())
+            self.assertEqual(result["status"], "rejected")
+            self.assertNotIn("analysis", result)
+            saved = list((Path(tmp) / "coach_rejections").glob("*.json"))
+            self.assertEqual(len(saved), 1)
+            record = json.loads(saved[0].read_text())
+            self.assertEqual(record["analysis"]["factors"][0]["interpretation"], "Teammates can share cover there.")
+            self.assertTrue(any("cover exists" in p for p in record["problems"]))
+            self.assertEqual(record["packet"]["clock"], "05:00")
+            self.assertFalse((Path(tmp) / "coach_cache").exists() and any((Path(tmp) / "coach_cache").iterdir()))
+
+    def test_accepted_response_is_not_recorded_as_a_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Coach(Path(tmp) / "coach_cache", call=lambda c, r: (good_analysis(), {}), env=self.env).analyze(tiny_packet())
+            self.assertFalse((Path(tmp) / "coach_rejections").exists())
+
+
+@unittest.skipUnless((DATA / "previews").is_dir() and any((DATA / "previews").glob("*/meta.json")), "no local preview")
+class PreviewReason(unittest.TestCase):
+    def test_preview_summary_carries_the_recorded_reason(self):
+        # Through the app route the page uses (the files store answers for previews).
+        from app import create_app
+
+        meta = json.loads(next((DATA / "previews").glob("*/meta.json")).read_text())
+        response = create_app(DATA, backend="files").test_client().get(f"/api/matches/{meta['game_id']}")
+        if response.status_code == 404:
+            self.skipTest("preview expired")
+        summary = response.get_json()
+        self.assertEqual((summary["storage"], summary["acceptance_reason"]), ("preview", meta.get("reason")))
+
+
+class RejectionRetention(unittest.TestCase):
+    def test_old_and_excess_logs_are_pruned(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            now = 1_000_000_000.0
+            for i in range(5):
+                path = folder / f"r{i}.json"
+                path.write_text("{}")
+                os.utime(path, (now - i * 10, now - i * 10))
+            stale = folder / "old.json"
+            stale.write_text("{}")
+            os.utime(stale, (now - 40 * 24 * 3600, now - 40 * 24 * 3600))
+            coach.prune_rejections(folder, keep=3, max_age_s=30 * 24 * 3600, now=now)
+            self.assertEqual(sorted(p.name for p in folder.glob("*.json")), ["r0.json", "r1.json", "r2.json"])
+
+    def test_configured_key_values_are_scrubbed(self):
+        import os
+
+        bad = good_analysis()
+        bad["factors"][0]["interpretation"] = "Teammates can share cover there."
+        secret = "sk-test-SECRETVALUE-123"
+        bad["situation_summary"] = f"Leaked {secret} here. The squad took 439 damage."
+        saved_env = os.environ.get("ANTHROPIC_API_KEY")
+        os.environ["ANTHROPIC_API_KEY"] = secret
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                c = Coach(Path(tmp) / "coach_cache", call=lambda config, request: (bad, {}),
+                          env={"COACH_PROVIDER": "anthropic", "COACH_MODEL": "m", "ANTHROPIC_API_KEY": secret})
+                self.assertEqual(c.analyze(tiny_packet())["status"], "rejected")
+                text = next((Path(tmp) / "coach_rejections").glob("*.json")).read_text()
+                self.assertNotIn(secret, text)
+                self.assertIn("[redacted]", text)
+        finally:
+            if saved_env is None:
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+            else:
+                os.environ["ANTHROPIC_API_KEY"] = saved_env

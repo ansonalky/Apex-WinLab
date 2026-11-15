@@ -37,6 +37,28 @@ Real results while checking, game 123633, Meaningless:
 
 The grounding checks are unchanged.
 
+## Prompts `coach-v5` and `decision-v6`: invented times and terrain in the visible action (2026-11-15)
+
+**Rejected responses are now kept.** `Coach.analyze` writes each rejected response to `data/coach_rejections/` (gitignored), with the full response, the failed checks, the evidence packet and provider metadata. A rejection is still never shown or cached, and the panel still shows "No review" with Retry. Two earlier `coach-v4` / `decision-v5` rejections were not recoverable, because the app discarded them before this change.
+
+**Timestamps.** An earlier rejection was for "14:12, not a time in the evidence". At that moment (game 123633, 14:15), 14:12 is the exact mm:ss of a recorded hit, but the packet gave hit times only as replay seconds (`first_hit_t`, `last_hit_t`). Two other hit times (13:40, 14:14) were exposed the same way.
+
+- **Evidence change.** Hit rows now also carry `first_hit_clock` and `last_hit_clock`. The validator is unchanged: any time that is not a clock in the packet is still rejected.
+- **Prompt change.** Both prompts now say to copy times only from packet clock fields, never to convert replay seconds or compute a time.
+
+**Terrain and length.** In `next_action`, terrain words may appear only inside its single condition. The length target is 12–18 words, and 25 remains the enforced maximum.
+
+**Calls.** Budget of 4, first attempt only, no retries. Responses were saved for review.
+
+| Moment | Prompt | Result | Words | Latency |
+| --- | --- | --- | --- | --- |
+| Preview 122975, UC San Diego Gold, 17:50 | `coach-v4` | accepted | 19 | 22.9 s |
+| Game 123476, BLACK HOLE decision, 14:33 | `decision-v5` | accepted | 19 | 32.0 s |
+| Preview 122975, 17:50 | `coach-v5` | accepted: "If UHE Varsity has no sightline onto you, let Lucien2714 heal and keep linhole inside the ring." | 17 | 18.9 s |
+| Game 123476, 14:33 | `decision-v6` | accepted: "Regroup Eastyy11 and XXFPS onto 蛋蛋 if KPY and MRGREEDY have no sightline onto the path." | 16 | 27.5 s |
+
+The `v4` / `v5` rejections did not reproduce on these two moments. Four calls cannot measure a rejection rate.
+
 ## Configuration
 
 The default provider is **Gemini**, through the official Google GenAI SDK (`google-genai`), with the output schema sent as `response_json_schema`. Anthropic is still implemented and can be selected explicitly. Only the configured provider is called. If it fails, the error is shown, and the coach never falls back to another provider.

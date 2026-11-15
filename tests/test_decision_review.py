@@ -159,7 +159,7 @@ class VerifyDecisionPacket(unittest.TestCase):
             c = Coach(Path(tmp), call=fake, env=env)
             self.assertEqual(c.analyze(tiny_packet(), DECISION)["status"], "rejected")
             ok = c.analyze(tiny_packet(), DECISION)
-            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v5"))
+            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v6"))
             self.assertTrue(c.analyze(tiny_packet(), DECISION)["cached"])
         self.assertIn("retrospective", seen[0]["system"])
         self.assertIn("REF-MATE-1", json.dumps(seen[0]["schema"]))

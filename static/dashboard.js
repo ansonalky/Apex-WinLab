@@ -149,19 +149,23 @@ function isPreview(match) {
   return info.storage === "preview" || match.storage === "preview" || match.collection === "preview";
 }
 
+// The preview tooltip names the specific reason the replay was not saved when
+// it is recorded; otherwise it falls back to what the score shows.
 function previewCopy(match) {
   const reason = match.acceptance_reason || match.reason;
+  const detail = match.acceptance_detail ? ` (${match.acceptance_detail})` : "";
   const score = qualityValue(match);
+  const prefix = "Available for 24 hours. Not saved because ";
   if (reason === "below_quality_threshold" || (reason == null && score !== null && score < 7)) {
-    return "Available for 24 hours. Not saved because quality is below 7.0.";
+    return `${prefix}quality ${score !== null ? score.toFixed(2) + " " : ""}is below 7.0.`;
   }
-  if (reason === "quality_unknown" || (reason == null && score === null)) {
-    return "Available for 24 hours. Not saved because quality is unknown.";
-  }
-  if (reason === "outcome_unknown") {
-    return "Available for 24 hours. Not saved because the winner is not verified.";
-  }
-  return "Available for 24 hours. Not saved because an acceptance check failed.";
+  if (reason === "quality_unknown" || (reason == null && score === null)) return `${prefix}quality is unknown.`;
+  if (reason === "score_scope_unresolved") return `${prefix}the quality score could not be matched to this game.`;
+  if (reason === "outcome_unknown") return `${prefix}the winner is not verified${detail}.`;
+  if (reason === "insufficient_position_data") return `${prefix}the replay has too little position data${detail}.`;
+  if (reason === "reconstruction_failed") return `${prefix}the replay could not be fully reconstructed${detail}.`;
+  if (reason) return `${prefix}the acceptance check "${reason}" failed${detail}.`;
+  return `${prefix}an acceptance check failed.`;
 }
 
 function predictionBadge(kind) {

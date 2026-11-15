@@ -162,6 +162,10 @@ class PreviewStore:
             "organizer_username": record.get("organizer_username"),
             "collection": "preview",
             "storage": "preview",
+            # Why the replay was not saved: the collector's reason, and the replay
+            # check's own detail when that check failed.
+            "acceptance_reason": record.get("reason"),
+            "acceptance_detail": (record.get("validation") or {}).get("detail") if isinstance(record.get("validation"), dict) else None,
             "winner": {
                 "teamId": winner.get("teamId"),
                 "teamName": winner.get("teamName"),

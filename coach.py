@@ -49,7 +49,7 @@ from match_inference import LABEL as NEW_MATCH_LABEL
 from tactical import LIMITS as TACTICAL_LIMITS
 from tactical import bearing, measure
 
-PROMPT_VERSION = "coach-v4"
+PROMPT_VERSION = "coach-v5"
 PACKET_VERSION = 1
 WINDOW_S = 60
 CHANGE_OFFSETS_S = (30, 60)
@@ -100,12 +100,19 @@ TERRAIN_RULE = """- Cover, sightlines, line of sight, buildings, high-ground con
   in the packet. You may ask about them, make a suggestion conditional on them ("If a covered route to
   the teammate exists, consider ..."), or say they are unknown. Never state that one exists or holds
   (for example "the squad has cover" or "the route is safe")."""
-NEXT_ACTION_RULE = """- next_action: the one sentence a player sees first. 10 to 20 words, never more than 25, in
+TIME_RULE = """- Times: write a time only by copying a "clock", "*_clock" or window clock value from the packet.
+  Never convert replay seconds (t, *_t, elapsed) to mm:ss yourself, never compute a new time, and
+  never write a relative time ("in 20 s") unless that number is in the packet. If no clock fits,
+  leave the time out."""
+
+NEXT_ACTION_RULE = """- next_action: the one sentence a player sees first. Aim for 12 to 18 words, never more than 25, in
   plain gameplay language, for example "Move inside the ring while Lucien heals; stay close enough to
   support." Keep in the same sentence the condition that makes it valid (if, when, while, unless, once,
   before, after or until); never turn conditional advice into an unconditional order. Name players or
   squads rather than narrating positions. No evidence IDs, unit counts, coordinates, heights or
-  technical terms, and do not start with "Consider". When no specific action is supported, write
+  technical terms, and do not start with "Consider". Use at most one condition. Cover, sightlines,
+  routes and buildings may appear only inside that condition ("if ... has no sightline onto you"),
+  never as something that exists or that the action uses. When no specific action is supported, write
   exactly "Insufficient information—check " followed by what to check."""
 
 RING_RULE = """- Name rings only by their "label" or "ring_number" (ring N is the N-th ring to close). "stage_raw"
@@ -133,7 +140,8 @@ Grounding rules:
 - Recent damage is evidence of recent fire, not proof of current exposure.
 - Do not invent opponents, terrain, geometry, intentions, loadouts or counterfactual numbers.
 - Every number you write must appear in the packet (you may round it). Do not compute new
-  percentages, rates or differences. Times are mm:ss of elapsed match time as in the packet.
+  percentages, rates or differences.
+{TIME_RULE}
 - Do not claim that a factor caused or will cause a win, loss or elimination, or assign
   any share or percentage of winning to a factor.
 - The win-probability model uses only the features listed in its evidence item. If a tactical
@@ -222,6 +230,15 @@ def _snapshot(game: dict, live, game_id: int, t: int, team: str) -> dict:
         "heldout_probability": _round(row["model"]) if row else None,
         "new_match_probability": _round(new_row["model"]) if new_row else None,
     }
+
+
+def _hit_clocks(row: dict, playing_start: int) -> dict:
+    """The mm:ss of a row's first and last hit, so a hit time can be quoted as evidence."""
+    out = dict(row)
+    for key in ("first_hit_t", "last_hit_t"):
+        if isinstance(row.get(key), int):
+            out[key.replace("_t", "_clock")] = _clock(row[key] - playing_start)
+    return out
 
 
 def _damage_window(game: dict, team: str, start: int, end: int, names: dict) -> tuple[dict, dict]:
@@ -441,9 +458,12 @@ def build_packet(*, store, live, tactical, game_id: int, t: int, team: Any) -> d
 
     add("ELEV", "elevation", "Relative height vs nearby squads", t, now["elevation"])
     add("FIRE-10S", "fire", f"Incoming fire, last {now['fire']['window_s']} s", t,
-        now["fire"] | {"attackers": [a | {"team_name": names.get(a["team"]) or a.get("team_name")} for a in now["fire"]["attackers"]]},
+        now["fire"] | {"attackers": [_hit_clocks(a | {"team_name": names.get(a["team"]) or a.get("team_name")}, start)
+                                     for a in now["fire"]["attackers"]]},
         window_from=max(start, t - now["fire"]["window_s"]))
     taken, dealt = _damage_window(game, team, window_start, t, names)
+    taken["attackers"] = [_hit_clocks(row, start) for row in taken["attackers"]]
+    dealt["targets"] = [_hit_clocks(row, start) for row in dealt["targets"]]
     add("FIRE-IN", "fire", f"Damage taken, last {t - window_start} s", t, taken | {"window_s": t - window_start}, window_from=window_start)
     add("FIRE-OUT", "fire", f"Damage dealt, last {t - window_start} s", t, dealt | {"window_s": t - window_start}, window_from=window_start)
 
@@ -1058,6 +1078,21 @@ def call_provider(config: dict, request: dict) -> tuple[dict, dict]:
     return call(config, request)
 
 
+REJECTION_KEEP = 200
+REJECTION_MAX_AGE_S = 30 * 24 * 3600
+
+
+def prune_rejections(folder: Path, keep: int = REJECTION_KEEP, max_age_s: float = REJECTION_MAX_AGE_S,
+                     now: float | None = None) -> None:
+    """Bounded retention for rejection logs: drop files older than ``max_age_s``,
+    then keep only the newest ``keep``."""
+    now = time.time() if now is None else now
+    files = sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for index, path in enumerate(files):
+        if index >= keep or now - path.stat().st_mtime > max_age_s:
+            path.unlink(missing_ok=True)
+
+
 class Coach:
     """Runs one analysis per request and caches validated results.
 
@@ -1092,6 +1127,27 @@ class Coach:
                 return None
         return None
 
+    def _record_rejection(self, base: dict, packet: dict, analysis: Any, problems: list[str], meta: dict) -> None:
+        """Keep a rejected response for review (data/coach_rejections/, gitignored).
+
+        Never shown and never cached; the reviewer can read the exact sentences,
+        the failed checks and the evidence they were checked against.
+        """
+        if not self.cache_dir:
+            return
+        folder = self.cache_dir.parent / "coach_rejections"
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        record = base | {"recorded_at": stamp, "problems": problems, "provider_meta": meta,
+                         "analysis": analysis, "packet": packet}
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{stamp}-{base['prompt_version']}-{base['packet_hash'][:12]}.json"
+            # No credential is part of a record; any configured key value is scrubbed anyway.
+            path.write_text(_redact(json.dumps(record, ensure_ascii=False, indent=1)), encoding="utf-8")
+            prune_rejections(folder)
+        except OSError:
+            pass  # recording is best effort; the rejection itself is still returned
+
     def _store(self, key: str, result: dict) -> None:
         with self._lock:
             self._memory[key] = result
@@ -1125,6 +1181,7 @@ class Coach:
             return base | {"status": "error", "kind": exc.kind, "error": exc.message, "retryable": exc.retryable}
         problems = spec.validate(analysis, packet)
         if problems:
+            self._record_rejection(base, packet, analysis, problems, meta)
             return base | {"status": "rejected", "retryable": True, "problems": problems, "provider_meta": meta,
                            "error": "The response failed the grounding checks and is not shown."}
         result = base | {

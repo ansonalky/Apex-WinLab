@@ -821,6 +821,11 @@ class MatchStore:
             "quality_score": record.get("quality_score"),
             "organizer_username": record.get("organizer_username"),
             "collection": record.get("_collection") or collection_name(self.data_dir),
+            # A temporary preview says why it was not saved: the collector's reason,
+            # and the replay check's own detail when that check failed.
+            **({"storage": "preview", "acceptance_reason": record.get("reason"),
+                "acceptance_detail": (record.get("validation") or {}).get("detail")
+                if isinstance(record.get("validation"), dict) else None} if record.get("_preview") else {}),
             "winner": {
                 "teamId": winner.get("teamId"),
                 "teamName": winner.get("teamName"),

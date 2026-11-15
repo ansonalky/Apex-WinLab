@@ -30,14 +30,14 @@ import re
 from typing import Any
 
 import coach
-from coach import NEXT_ACTION_RULE, RING_RULE, TERRAIN_RULE, check_next_action, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
+from coach import NEXT_ACTION_RULE, RING_RULE, TERRAIN_RULE, TIME_RULE, check_next_action, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
 from live_predictions import FINAL, HELD_OUT, NEW_MATCH
 from match_inference import LABEL as NEW_MATCH_LABEL
 from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
 
-DECISION_PROMPT_VERSION = "decision-v5"
+DECISION_PROMPT_VERSION = "decision-v6"
 LEAD_S = 10
 MOVE_OFFSETS_S = (30, 60)
 OPTIONS = ("hold", "regroup", "disengage", "rotate_to_verified_position")
@@ -395,8 +395,8 @@ Feasibility rules:
 - Opponent positions are observer-only: the squad may not have known them.
 - A higher z is a height difference only. Recent damage is evidence of recent fire, not
   proof of current exposure.
-- Every number you write must appear in the packet (you may round it). Times are mm:ss of
-  elapsed match time as in the packet.
+- Every number you write must appear in the packet (you may round it).
+{TIME_RULE}
 - Do not claim a factor caused a loss or assign a share of winning to it.
 
 Writing options, the rationale, the attribution and the takeaway:
