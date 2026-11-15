@@ -183,6 +183,8 @@ table.probs tr.selected button.squad-name { font-weight: 600; }
 .estimate-text .tag { margin-right: 0.3rem; }
 table.probs.compact { margin-top: 0.4rem; font-size: 0.82rem; }
 table.probs.compact td { padding: 0.1rem 0.3rem; }
+table.probs.compact td.rank { width: 1.6rem; color: #8b93a1; text-align: right; font-variant-numeric: tabular-nums; }
+table.probs.compact tbody.pinned tr:first-child td { border-top: 1px dashed #3a4252; }
 details.info { position: relative; align-self: flex-start; }
 details.info > summary { list-style: none; cursor: pointer; width: 1.4rem; height: 1.4rem; line-height: 1.4rem; text-align: center; border-radius: 99px; border: 1px solid #2c3340; color: #a0cbe8; }
 details.info > summary::-webkit-details-marker { display: none; }

@@ -464,19 +464,33 @@ function renderRoster() {
   }).join("")}</div>`;
 }
 
-// Clickable squad comparison. Squads in contention are listed; eliminated
-// squads are folded into one expandable row.
+// Clickable squad comparison. The top TOP_SQUADS squads in contention by
+// unrounded probability come first; the selected squad is always shown, under
+// them with its actual rank when it is not among them (eliminated: 0%, no
+// rank). Other squads in contention and eliminated squads are folded into
+// their own expandable lists. Display only: every value is the model's own,
+// never renormalized over the visible rows.
+const TOP_SQUADS = 5;
 function comparisonTable(squads, valueKey) {
   const team = selectedTeam();
-  const row = (squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
-      <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${teamTagFor(squad.teamId, squad.team_name)}</button></td>
+  const isSelected = (squad) => String(squad.teamId) === team;
+  const row = (squad, rank) => `<tr class="${isSelected(squad) ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
+      <td class="rank">${rank || ""}</td>
+      <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${teamTagFor(squad.teamId, squad.team_name)}</button>${squad.eliminated && isSelected(squad) ? '<span class="when"> · eliminated</span>' : ""}</td>
       <td class="num">${pct(squad[valueKey])}</td>
     </tr>`;
-  const sorted = [...squads].sort((a, b) => b[valueKey] - a[valueKey]);
-  const live = sorted.filter((squad) => !squad.eliminated);
-  const out = sorted.filter((squad) => squad.eliminated);
-  return `<table class="probs compact"><tbody>${live.map(row).join("")}</tbody></table>
-    ${out.length ? `<details class="sub" ${window.UI.keep("compare-out")}><summary>${out.length} eliminated squad${out.length === 1 ? "" : "s"} (0.0%)</summary><table class="probs compact"><tbody>${out.map(row).join("")}</tbody></table></details>` : ""}`;
+  const sorted = [...squads].sort((a, b) => b[valueKey] - a[valueKey] || String(a.teamId).localeCompare(String(b.teamId)));
+  const live = sorted.filter((squad) => !squad.eliminated).map((squad, index) => ({ squad, rank: index + 1 }));
+  const top = live.slice(0, TOP_SQUADS);
+  const pinned = sorted.find((squad) => isSelected(squad) && (squad.eliminated || !top.some((item) => item.squad === squad)));
+  const pinnedRow = pinned ? row(pinned, pinned.eliminated ? null : live.find((item) => item.squad === pinned).rank) : "";
+  const others = live.slice(TOP_SQUADS).filter((item) => item.squad !== pinned);
+  const out = sorted.filter((squad) => squad.eliminated && squad !== pinned);
+  const outLabel = `${out.length}${pinned && pinned.eliminated ? " other" : ""} eliminated squad${out.length === 1 ? "" : "s"} (0.0%)`;
+  return `<table class="probs compact"><tbody>${top.map((item) => row(item.squad, item.rank)).join("")}</tbody>
+      ${pinnedRow ? `<tbody class="pinned">${pinnedRow}</tbody>` : ""}</table>
+    ${others.length ? `<details class="sub" ${window.UI.keep("compare-other")}><summary>Other squads (${others.length})</summary><table class="probs compact"><tbody>${others.map((item) => row(item.squad, item.rank)).join("")}</tbody></table></details>` : ""}
+    ${out.length ? `<details class="sub" ${window.UI.keep("compare-out")}><summary>${outLabel}</summary><table class="probs compact"><tbody>${out.map((squad) => row(squad, null)).join("")}</tbody></table></details>` : ""}`;
 }
 
 // The full per-squad table used in Model details, with the baseline column.
