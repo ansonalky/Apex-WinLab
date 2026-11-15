@@ -4,12 +4,12 @@ const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
 const node=()=>({innerHTML:'',textContent:'',hidden:false,disabled:false,dataset:{},listeners:{},attributes:{},setAttribute(k,v){this.attributes[k]=v;},addEventListener(k,f){(this.listeners[k]??=[]).push(f);},scrollIntoView(){},querySelector(){return null;}});
 (async()=>{
  const output=node(),details=node(),setup=node(),pin=node(),analyze=node(),key=node(),run=node(),heading=node(),notice=node(),dd=node(),sd=node(),time={value:'01:30'};
- setup.querySelector=s=>s==='#decision-time'?time:s.includes('run')?run:null;
+ output.querySelector=s=>s==='#decision-time'?time:s.includes('run')?run:null;
  const tabs=['situation','decision'].map(mode=>Object.assign(node(),{dataset:{reviewMode:mode}}));
- const nodes={'#coach':output,'#coach-details':details,'#decision':setup,'#decision-pin':pin,'#coach-run':analyze,'#start-here':key,'#review-context':heading,'#review-notice':notice,'#decision-details':dd,'#situation-details':sd};
+ const nodes={'#coach':output,'#coach-details':details,'#coach-run':analyze,'#start-here':key,'#review-context':heading,'#review-notice':notice,'#situation-details':sd};
  const posts=[],timers=new Map();let tid=0,clocks=0;
  const now={game:888,team:'7',t:190,elapsed:90,start:100,squadName:'Squad',squads:[]};
- const ctx={document:{querySelector:s=>nodes[s],querySelectorAll:s=>s==='[data-review-mode]'?tabs:[analyze,key,run]},window:{UI:{mmss:s=>`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`,teamIndex:()=>()=> 'Squad',teamTag:s=>s,span:()=>'',finite:Number.isFinite,pct:()=>'',pp:()=>'',text:()=>''}},AbortController,console,
+ const ctx={document:{querySelector:s=>nodes[s],querySelectorAll:s=>s==='[data-review-mode]'?tabs:[analyze,key,run]},window:{UI:{mmss:s=>`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`,teamIndex:()=>()=> 'Squad',teamTag:s=>s,keep:()=>'',span:()=>'',finite:Number.isFinite,pct:()=>'',pp:()=>'',text:()=>''}},AbortController,console,
  setTimeout(f){timers.set(++tid,f);return tid;},clearTimeout(id){timers.delete(id);},
  ReviewStatus:{loadingMarkup:()=>'<p>Reviewing…</p>',startClock(){clocks++;let stopped=false;return()=>{if(!stopped){clocks--;stopped=true;}};},announce(){},completionAnnouncement:()=>'',classifyFailure:()=>({status:'error',error:'Network failure',retryable:true})},
  fetch(url,options){if(!options)return Promise.resolve({json:async()=>({configured:true})});let resolve;const promise=new Promise(r=>resolve=r);posts.push({url,options,resolve});return promise;}};
@@ -17,7 +17,7 @@ const node=()=>({innerHTML:'',textContent:'',hidden:false,disabled:false,dataset
  const C=ctx.window.Coach,D=ctx.window.DecisionReview,P=ctx.window.ReviewPanel;
  C.init({context:()=>now,seek(){}});D.init({context:()=>now,seek(){},redraw(){}});await flush();
  const episode={squad_id:7,squad_name:'Squad',episode_start_elapsed:100,episode_end_elapsed:140,prediction_kind:'final_model_fitted',start_t:195,episode_start_t:200};
- assert.equal(D.open(episode),90);assert.equal(dd.hidden,false);assert.equal(sd.hidden,true);
+ assert.equal(D.open(episode),90);assert.equal(sd.hidden,true);assert.match(output.innerHTML,/<summary>Review details<\/summary>[\s\S]*decision-time/);assert.match(output.innerHTML,/decision at <strong>01:30/);
  const first=D.start({game:888,team:'7',t:190});assert.equal(posts.length,1);assert.match(posts[0].url,/decision-review$/);
  assert.equal(await C.start(),false);assert.equal(posts.length,1);assert.equal(analyze.disabled,true);assert.equal(key.disabled,true);assert.equal(run.disabled,true);
  assert.equal(P.select('situation'),false);assert.equal(notice.textContent,'A review is already running');

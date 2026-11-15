@@ -25,8 +25,9 @@ window.ReviewPanel = (() => {
       heading.textContent = previous ? previous.heading : labels[mode];
     }
     document.querySelectorAll('[data-review-mode]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.reviewMode === mode)));
-    document.querySelector('#decision-details').hidden = mode !== 'decision';
-    document.querySelector('#situation-details').hidden = mode !== 'situation';
+    // Decision setup and provenance live in the output's own Review details; no second panel.
+    const situationDetails = document.querySelector('#situation-details');
+    if (situationDetails) situationDetails.hidden = mode !== 'situation';
     controls();
     if (mode === "situation" && window.Coach) window.Coach.update();
     if (mode === "decision" && window.DecisionReview) window.DecisionReview.update();

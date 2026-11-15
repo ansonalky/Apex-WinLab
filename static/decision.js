@@ -1,10 +1,13 @@
-// Decision review of one downward highlight. Opening a highlight only fills
-// the panel; the review is requested only by "Review decision". The decision
-// time is editable, defaults to shortly before the episode, and stays pinned
-// beside the slider while the replay moves elsewhere. Any failure here is
-// shown in this panel and never reaches replay startup or seeking.
+// Decision review of one downward highlight, shown in the unified AI Coach.
+// "Review decision" on a key moment selects that moment and starts its review
+// (dashboard.js reviewKeyMoment). The visible part is only the squad, the
+// reviewed time, loading or the result, and Retry; the episode window,
+// provenance, the editable decision time and the explanations sit in the
+// collapsed "Review details". The decision time defaults to shortly before
+// the episode. Any failure here is shown in this panel and never reaches
+// replay startup or seeking.
 window.DecisionReview = (() => {
-  const box = document.querySelector("#decision");
+  const box = document.querySelector("#decision"); // legacy setup block; absent from the page now
   const output = document.querySelector("#coach");
   const pin = document.querySelector("#decision-pin");
   const LEAD_S = 10;
@@ -78,10 +81,21 @@ window.DecisionReview = (() => {
       <p class="decision-error unavailable" hidden></p>`;
   }
 
+  // Collapsed setup and provenance for the current moment, under every state of the review.
+  function reviewDetails(extra = "") {
+    if (!state) return extra;
+    return `<details class="sub" ${window.UI.keep("decision-review-details")}><summary>Review details</summary>
+        ${episodeView()}${controlsView()}${extra}
+      </details>`;
+  }
+
+  function headline(elapsed) {
+    return `<p class="review-for">${state.teamTag(state.team, state.squadName)} · decision at <strong>${clock(elapsed)}</strong></p>`;
+  }
+
   function render(body) {
-    if (!box || !state) return;
-    box.innerHTML = `${episodeView()}${controlsView()}`;
-    setBody(body || "");
+    if (!state) return;
+    setBody(`${headline(state.decisionElapsed)}${body || ""}${reviewDetails()}`);
     updatePin();
   }
 
@@ -181,12 +195,10 @@ window.DecisionReview = (() => {
           ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
         </details>
       </details>
-      <details class="sub"><summary>Review details</summary>
-        <p class="when">${esc(r.label || "")}</p>
+      ${reviewDetails(`<p class="when">${esc(r.label || "")}</p>
         <dl class="facts">${details.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
         <span class="section-label">Evidence cited by the recommendation</span><p>${chips(rec.evidence_ids, p) || '<span class="when">none</span>'}</p>
-        ${packetView(p)}
-      </details>`;
+        ${packetView(p)}`)}`;
   }
 
   function setupView(r) {
@@ -194,18 +206,19 @@ window.DecisionReview = (() => {
     return `<p class="unavailable"><strong>AI review is not set up.</strong> No review was requested and none is shown.</p>
       <p class="when">Provider ${esc(s.provider || "none")} · model ${esc(s.model || "none")} · prompt ${esc(r.prompt_version || "")}</p>
       <ul>${(s.missing || []).map((m) => `<li>${esc(m)}</li>`).join("")}</ul>
-      <details><summary>How to set it up</summary><ol>${(s.setup || []).map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
-      <p class="when">The evidence that would be sent:</p>${packetView(r.packet)}`;
+      ${reviewDetails(`<details><summary>How to set it up</summary><ol>${(s.setup || []).map((m) => `<li>${esc(m)}</li>`).join("")}</ol></details>
+      <p class="when">The evidence that would be sent:</p>${packetView(r.packet)}`)}`;
   }
 
+  // Visible: who, when, why it failed, Retry. Failed checks and evidence are in Review details.
   function errorView(r, request) {
     const problems = (r.problems || []).map((p) => `<li>${esc(p)}</li>`).join("");
     const who = request && request.squadName ? `${esc(request.squadName)} at ` : "";
     return `<p class="unavailable"><strong>No review for ${who}${clock(request.elapsed)}.</strong> ${esc(r.error || r.reason || "The request failed.")}</p>
-      ${problems ? `<details open><summary>Checks that failed</summary><ul>${problems}</ul></details>` : ""}
-      <p class="when">${r.kind ? `Kind: ${esc(r.kind)}. ` : ""}No earlier review is shown in its place.</p>
       ${r.retryable !== false ? `<p><button type="button" class="action" data-decision="retry">Retry ${clock(request.elapsed)}</button></p>` : ""}
-      ${packetView(r.packet)}`;
+      ${reviewDetails(`${problems ? `<span class="section-label">Checks that failed</span><ul>${problems}</ul>` : ""}
+      <p class="when">${r.kind ? `Kind: ${esc(r.kind)}. ` : ""}No earlier review is shown in its place.</p>
+      ${packetView(r.packet)}`)}`;
   }
 
   function markers(gameId) {
@@ -260,15 +273,18 @@ window.DecisionReview = (() => {
     }
   }
 
+  // The decision-time controls live inside the coach output's Review details.
+  const controlsRoot = () => output || box;
+
   function showError(message) {
-    const el = box && box.querySelector(".decision-error");
+    const el = controlsRoot() && controlsRoot().querySelector(".decision-error");
     if (!el) return;
     el.hidden = !message;
     el.textContent = message || "";
   }
 
   function readTime() {
-    const input = box.querySelector("#decision-time");
+    const input = controlsRoot().querySelector("#decision-time");
     const elapsed = parseClock(input && input.value);
     if (elapsed === null) {
       showError("Enter the decision time as mm:ss.");
@@ -285,7 +301,7 @@ window.DecisionReview = (() => {
   }
 
   function setRunEnabled(enabled) {
-    const runButton = box && box.querySelector("[data-decision='run']");
+    const runButton = controlsRoot() && controlsRoot().querySelector("[data-decision='run']");
     if (runButton) runButton.disabled = !enabled;
   }
 
@@ -302,7 +318,7 @@ window.DecisionReview = (() => {
     const timer = setTimeout(() => requestController.abort("timeout"), 105000);
     result = null;
     redraw();
-    setBody(`${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}<p><button type="button" class="action quiet" data-decision="cancel">Cancel</button></p>`);
+    setBody(`${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}<p><button type="button" class="action quiet" data-decision="cancel">Cancel</button></p>${reviewDetails()}`);
     const stopClock = ReviewStatus.startClock(output, ReviewStatus.announce);
     requestController.cancelReview = () => {
       if (mine !== token) return;
@@ -341,7 +357,7 @@ window.DecisionReview = (() => {
       } else if (r.status === "not_configured") {
         setBody(setupView(r));
       } else if (["finished", "squad_eliminated", "invalid", "unavailable"].includes(r.status)) {
-        setBody(`<p class="unavailable">${esc(r.reason || "Not available.")}</p>`);
+        setBody(`<p class="unavailable">${esc(r.reason || "Not available.")}</p>${reviewDetails()}`);
       } else {
         setBody(errorView(r, request));
       }
@@ -383,7 +399,7 @@ window.DecisionReview = (() => {
   function open(item) {
     if (running) return;
     const now = context();
-    if (!now || !box) return;
+    if (!now || !(output || box)) return;
     if (window.ReviewPanel && !window.ReviewPanel.select("decision")) return;
     token += 1;
     result = null;
@@ -398,7 +414,7 @@ window.DecisionReview = (() => {
       teamTag: window.UI.teamIndex(now.squads),
     };
     if (window.ReviewPanel) window.ReviewPanel.describe("decision", {squadName: state.squadName, elapsed: suggested});
-    render(`<p class="when">Nothing has been requested. Adjust the decision time if needed, then click “Review decision”.</p>`);
+    render(`<p class="when">Not requested yet. The decision time can be changed in Review details.</p>`);
     redraw();
     (output || box).scrollIntoView({ behavior: "smooth", block: "nearest" });
     return suggested;
@@ -418,7 +434,7 @@ window.DecisionReview = (() => {
       const what = action.dataset.decision;
       if (what === "run") startReview();
       else if (what === "seek") { const e = readTime(); if (e !== null) seekTo(e); }
-      else if (what === "suggested") { state.decisionElapsed = state.suggestedElapsed; box.querySelector("#decision-time").value = clock(state.suggestedElapsed); showError(""); updatePin(); }
+      else if (what === "suggested") { state.decisionElapsed = state.suggestedElapsed; controlsRoot().querySelector("#decision-time").value = clock(state.suggestedElapsed); showError(""); updatePin(); }
       else if (what === "retry" && lastRequest && !running) { seekTo(lastRequest.elapsed); run(lastRequest); }
       else if (what === "cancel" && controller) controller.cancelReview();
     } catch (error) {
@@ -427,7 +443,9 @@ window.DecisionReview = (() => {
   }
   box && box.addEventListener("click", onClick);
   output && output.addEventListener("click", onClick);
-  box && box.addEventListener("change", (event) => { if (event.target.id === "decision-time") readTime(); });
+  output && output.addEventListener("change", (event) => {
+    if (event.target.id === "decision-time" && (!window.ReviewPanel || window.ReviewPanel.active("decision"))) readTime();
+  });
   pin && pin.addEventListener("click", (event) => {
     const chip = event.target.closest("button.evidence");
     if (chip) seekTo(Number(chip.dataset.elapsed));

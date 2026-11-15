@@ -273,7 +273,12 @@ function waitForKeyMoment(signal) {
     else signal.addEventListener("abort", finish, { once: true });
   });
 }
-function reviewKeyMoment() {
+// Review one key moment: the largest drop for the selected squad, or the
+// moment chosen on a "Win estimate fell" card. Either way it is matched in a
+// fresh detector list, sought, synchronized, then reviewed.
+function reviewKeyMoment(choice) {
+  // Also a click handler, so anything without episode times is not a chosen moment.
+  const chosen = choice && Number.isFinite(choice.episode_start_t) && Number.isFinite(choice.start_t) ? choice : null;
   if (window.ReviewPanel && window.ReviewPanel.busy()) return Promise.resolve(false);
   if (keyMomentRun) return keyMomentRun;
   const game = String(matchSelect.value), team = selectedTeam();
@@ -293,7 +298,7 @@ function reviewKeyMoment() {
       if (activeLoad) await activeLoad;
       if (!current()) return;
       if (!summary || String(summary.game_id) !== game || timeInput.disabled || !team) throw new Error("Wait for the selected match and squad to finish loading, then try again.");
-      const kind = primaryKind();
+      const kind = chosen && chosen.prediction_kind ? chosen.prediction_kind : primaryKind();
       let result;
       for (let attempt = 0; attempt < 60; attempt += 1) {
         result = await fetchHighlights(game, kind, team, signal);
@@ -309,7 +314,9 @@ function reviewKeyMoment() {
         && (item.prediction_kind == null || item.prediction_kind === kind)
         && (!item.seek || item.seek.game_id == null || String(item.seek.game_id) === game));
       // Use the existing detector's ranking metric; do not recompute predictions.
-      const item = down.reduce((best, row) => !best || row.change_pp < best.change_pp ? row : best, null);
+      const item = chosen
+        ? down.find((row) => row.start_t === chosen.start_t && row.episode_start_t === chosen.episode_start_t) || null
+        : down.reduce((best, row) => !best || row.change_pp < best.change_pp ? row : best, null);
       if (!item) {
         setStartStatus("No review moment found for this squad");
         offerManualAnalysis(true);
@@ -1180,9 +1187,10 @@ function seekHighlight(elapsed) {
   seek(Number(timeInput.value));
 }
 
+// "Review decision" on a key moment selects that moment and starts its review.
 function openDecision(items, index) {
   const item = (items || [])[Number(index)];
-  if (item && window.DecisionReview) safely(() => window.DecisionReview.open(item));
+  if (item && window.DecisionReview) safely(() => reviewKeyMoment(item));
 }
 
 // Arrows change the displayed card only: no seek, no request.
