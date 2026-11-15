@@ -109,6 +109,23 @@ def ring_at(entries: list[dict], t: int) -> dict:
     }
 
 
+def ring_target(entries: list[dict], ring: dict) -> dict | None:
+    """The circle the ring is closing toward, for the map only (not a feature).
+
+    The stream inserts a stage's live entry when that stage starts closing, and
+    the entry already carries its target (``endCenter``, ``endSize``). Across
+    the 100 local replays no target was revised after insertion, and no entry
+    for the next stage exists while the ring waits. So a target is known only
+    while a recorded stage closes; while waiting it is unknown, never taken
+    from the t 0 plan.
+    """
+    if ring.get("phase") != "closing" or not entries:
+        return None
+    entry = entries[-1]
+    center = entry["endCenter"]
+    return {"x": center["x"], "y": center["y"], "r": entry["endSize"], "stage": entry.get("stage")}
+
+
 def _position(row: dict) -> tuple[float, float] | None:
     x, y = row["pos"]["value"]["x"], row["pos"]["value"]["y"]
     if isinstance(x, bool) or isinstance(y, bool) or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):

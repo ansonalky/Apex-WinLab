@@ -31,7 +31,8 @@ from typing import Any
 from dashboard_data import _raw_path, _record
 from features import STANDING
 from overstat_patch import _leaf, apply_frame, export_players, frame_entries, initial_state
-from ring_features import live_entries, ring_at
+from event_timeline import display_feed, markers_for_team, ring_span
+from ring_features import live_entries, ring_at, ring_target
 from ring_label import LAST_CLOSED, ring_label
 from turning_points import recorded_events
 
@@ -222,6 +223,7 @@ class TacticalIndex:
         state, observed = initial_state(), {}
         seconds: dict[int, dict] = {}
         damage: list[dict] = []
+        ring_spans: dict[int, dict] = {}
         start = None
         facing = FacingTrack()
         for frame in frame_entries(series):
@@ -239,14 +241,30 @@ class TacticalIndex:
                 if state.get("state") != "Playing":
                     continue
                 start = t
+            entries = live_entries(state, observed)
+            for entry in entries:
+                stage = entry.get("stage")
+                if isinstance(stage, int) and not isinstance(stage, bool) and stage not in ring_spans:
+                    ring_spans[stage] = ring_span(entry)
+            ring = ring_at(entries, t)
             seconds[t] = {
                 "players": [_player(row) for row in export_players(state, observed, t)],
-                "ring": ring_at(live_entries(state, observed), t),
+                "ring": ring,
+                # Map only; the coach and tactical measurements read "ring".
+                "ring_target": ring_target(entries, ring),
                 "phase": state.get("state"),
                 "facing": _facing(state, observed, t, facing.confirmed),
             }
         # Feed events on the frame's replay clock, for the coach's recent-events window.
-        return {"playing_start": start, "seconds": seconds, "damage": damage, "events": recorded_events(series)}
+        # display_feed is the map timeline only. It is not read by the coach or the model.
+        return {
+            "playing_start": start,
+            "seconds": seconds,
+            "damage": damage,
+            "events": recorded_events(series),
+            "ring_spans": ring_spans,
+            "display_feed": display_feed(series),
+        }
 
     def game(self, game_id: int) -> dict | None:
         with self._lock:
@@ -259,6 +277,66 @@ class TacticalIndex:
             while len(self._games) > CACHE_GAMES:
                 self._games.popitem(last=False)
         return built
+
+    def ring_overlay_at(self, game_id: int, t: int) -> dict:
+        """The map's ring at second ``t``: the same causal reader and label as the
+        tactical panel and the coach, plus the closing target when one is revealed."""
+        game = self.game(game_id)
+        if game is None:
+            return {"state": "unavailable", "t": t, "location": None, "target": None, **ring_label("unavailable", None, LAST_CLOSED)}
+        second = game["seconds"].get(t)
+        if second is None:
+            # Before play starts no ring entry is live; after the last second nothing is recorded.
+            phase = "not_revealed" if game["playing_start"] is None or t < game["playing_start"] else "unavailable"
+            return {"state": phase, "t": t, "location": None, "target": None, **ring_label(phase, None, LAST_CLOSED)}
+        ring = second["ring"]
+        known = ring.get("known")
+        return {
+            "state": ring.get("phase"),
+            "t": t,
+            "location": {"x": ring["center"][0], "y": ring["center"][1], "r": ring["radius"]} if known else None,
+            "target": second.get("ring_target"),
+            "countdown_s": ring.get("closing_remaining_s"),
+            **ring_label(ring.get("phase"), ring.get("stage"), LAST_CLOSED),
+        }
+
+    def event_timeline(self, game_id: int, team: Any) -> dict:
+        """Map timeline for one squad. Display only: not a model or coach input."""
+        game = self.game(game_id)
+        if game is None:
+            return {"available": False, "reason": "no local replay for this match", "display_only": True}
+        start = game.get("playing_start")
+        seconds = game.get("seconds") or {}
+        last = max(seconds) if seconds else None
+
+        def elapsed(t: int | None) -> int | None:
+            if start is None or t is None:
+                return None
+            return int(t) - int(start)
+
+        rings = []
+        for stage in sorted(game.get("ring_spans") or {}):
+            span = game["ring_spans"][stage]
+            recorded = bool(span.get("end_recorded")) and span.get("end_t") is not None
+            rings.append({
+                "stage": stage,
+                "ring_number": stage + 1,
+                "start_t": span.get("start_t"),
+                "end_t": span.get("end_t") if recorded else None,
+                "start_elapsed": elapsed(span.get("start_t")),
+                "end_elapsed": elapsed(span.get("end_t")) if recorded else None,
+                "end_recorded": recorded,
+            })
+        return {
+            "available": True,
+            "display_only": True,
+            "game_id": game_id,
+            "team": str(team),
+            "playing_start": start,
+            "duration_s": elapsed(last),
+            "rings": rings,
+            "markers": markers_for_team(game.get("display_feed") or [], team, elapsed),
+        }
 
     def facing_at(self, game_id: int, t: int) -> dict:
         """Held facing at exactly second ``t``, as decoded causally up to ``t``."""

@@ -2,34 +2,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from flask import Blueprint, current_app, jsonify, request
 
-from map_config import current_ring, load_rings, public_config
-from ring_label import NEXT_TO_CLOSE, ring_label
+from map_config import public_config
 
 map_bp = Blueprint("map_view", __name__)
-_rings: dict[int, list] = {}
-
-
-def _data_dir() -> Path:
-    return current_app.config["DATA_DIR"]
-
-
-def _rings_for(game_id: int) -> list:
-    if game_id not in _rings:
-        _rings[game_id] = load_rings(_data_dir(), game_id)
-    return _rings[game_id]
 
 
 def ring_at(game_id: int, t: int) -> dict:
-    state = current_ring(_rings_for(game_id), t)
-    # Shared user-facing label; the raw ``stage`` (next ring to close while waiting) is kept.
-    state.update(ring_label(state.get("state"), state.get("stage"), NEXT_TO_CLOSE))
-    state["t"] = t
-    state["show_future"] = False
-    return state
+    """The map's ring at replay second ``t``.
+
+    Read from live ring entries only, through the same reader and shared label
+    as the tactical panel and the coach (``TacticalIndex.ring_overlay_at``). The
+    raw file's planned schedule is not used.
+    """
+    return current_app.config["TACTICAL"].ring_overlay_at(game_id, t)
 
 
 @map_bp.get("/api/map-config")

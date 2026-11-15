@@ -432,6 +432,7 @@ async function loadFrame(elapsed) {
     renderPredictions();
     if (window.Coach) safely(() => window.Coach.update());
     if (window.DecisionReview) safely(() => window.DecisionReview.update());
+    syncTimeline();
   }
   if (pendingSeek !== null) {
     const latest = pendingSeek;
@@ -1165,6 +1166,18 @@ function applySquadSelection() {
   loadTactical();
   if (window.Coach) safely(() => window.Coach.update());
   if (window.DecisionReview) safely(() => window.DecisionReview.update());
+  syncTimeline();
+}
+
+function syncTimeline() {
+  if (!window.EventTimeline || !summary) return;
+  safely(() => window.EventTimeline.sync({
+    gameId: summary.game_id,
+    team: selectedTeam(),
+    elapsed: frame ? frame.elapsed : Number(timeInput.value) || 0,
+    duration: Number(timeInput.max) || 0,
+    seek: seekHighlight,
+  }));
 }
 
 let selectionScroll = null;
@@ -1328,7 +1341,7 @@ document.querySelector("#open-match").addEventListener("submit", (event) => {
 // Help bubbles: hover and keyboard focus show them, click or tap pins them,
 // and Escape dismisses. The bubble stays open while the pointer moves into it.
 function installHelp() {
-  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #coach-run, .topbar a, .topbar h1";
+  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #event-timeline, #ring-status, #coach-run, .topbar a, .topbar h1";
   let hideTimer = null;
 
   function bubbleOf(help) { return help.querySelector(".help-bubble"); }

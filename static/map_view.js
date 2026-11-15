@@ -78,7 +78,8 @@ function paint(view) {
     return [mapLeft + (sx / 2048) * mapW, mapTop + (sy / 2048) * mapH];
   };
   const radius = (r) => (mapCordR(r, spec) / 2048) * mapW;
-  const points = (frame.players || []).filter((player) => player.x !== null && player.y !== null);
+  drawRing(ctx, ring, project, radius, { mapLeft, mapTop, mapW, mapH });
+  const points =(frame.players || []).filter((player) => player.x !== null && player.y !== null);
   for (const player of points) {
     const [px, py] = project(player.x, player.y);
     hits.push({
@@ -117,26 +118,6 @@ function paint(view) {
     }
   }
   ctx.globalAlpha = 1;
-  const location = ring && ring.location;
-  if (location && location.r < 100000) {
-    const [cx, cy] = project(location.x, location.y);
-    const rr = radius(location.r);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, css.width, css.height);
-    ctx.clip();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-    ctx.beginPath();
-    ctx.rect(mapLeft, mapTop, mapW, mapH);
-    ctx.arc(cx, cy, rr, 0, Math.PI * 2, true);
-    ctx.fill("evenodd");
-    ctx.restore();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-    ctx.stroke();
-  }
   // Reference points with known coordinates (decision review), through the
   // same camera projection. A point only: no route is drawn, because none is known.
   for (const marker of view.markers || []) {
@@ -442,14 +423,46 @@ function mapCordR(value, spec) {
   return 1024 * (value / spec.x);
 }
 
+// The ring under the players, through the same project()/radius() as every
+// mark, so zoom and pan move it with the map. Outside the current boundary is
+// shaded orange; the boundary itself has no outline. The circle it is closing
+// toward is a thin white outline, drawn only while the server sends one: the
+// stream reveals a target when its stage starts closing, so there is none
+// while the ring waits, and none for a stage whose end is not recorded.
+const RING_RADIUS_MAX = 100000;
+function drawRing(ctx, ring, project, radius, map) {
+  const location = ring && ring.location;
+  if (location && location.r < RING_RADIUS_MAX) {
+    const [cx, cy] = project(location.x, location.y);
+    ctx.save();
+    ctx.fillStyle = "rgba(214, 64, 28, 0.4)";
+    ctx.beginPath();
+    ctx.rect(map.mapLeft, map.mapTop, map.mapW, map.mapH);
+    ctx.arc(cx, cy, radius(location.r), 0, Math.PI * 2, true);
+    ctx.fill("evenodd");
+    ctx.restore();
+  }
+  const target = ring && ring.target;
+  if (target && Number.isFinite(target.x) && Number.isFinite(target.y) && Number.isFinite(target.r) && target.r < RING_RADIUS_MAX) {
+    const [tx, ty] = project(target.x, target.y);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(tx, ty, radius(target.r), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function ringText(ring) {
-  // ring.label is the shared server-side label (ring N = N-th closure); ring.stage stays the raw index.
-  if (ring && ring.state === "closing_unrecorded") return `${ring.label}; the replay ends before this ring's end, so it is not drawn`;
-  if (ring && ring.state === "unavailable") return "Ring: not available at this time";
-  if (!ring || ring.state === "none" || !ring.location) return "Ring: none at this time";
-  const countdown = ring.countdown_s == null ? "" : ` ${formatClock(ring.countdown_s)}`;
-  if (!countdown) return ring.label;
-  return ring.state === "closing" ? `${ring.label} ·${countdown} left` : `${ring.label} · closes in${countdown}`;
+  // ring.label is the shared server-side label (ring N = N-th closure), the same as the tactical panel and coach.
+  if (!ring || ring.state === "unavailable" || ring.state === "inconsistent") return "Ring: not available at this time";
+  if (ring.state === "closing_target_unknown") return `${ring.label}; its end is not recorded, so it is not drawn`;
+  if (ring.state === "not_revealed") return `${ring.label}; no ring revealed yet`;
+  if (ring.state === "closing") return ring.countdown_s == null ? ring.label : `${ring.label} · ${formatClock(ring.countdown_s)} left`;
+  if (ring.state === "waiting") return `${ring.label} · next ring not revealed yet`;
+  return ring.label || "Ring: none at this time";
 }
 
 // Screen direction of a player's recorded yaw, or null for a plain dot.

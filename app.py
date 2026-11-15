@@ -172,6 +172,7 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     highlights = HighlightCache()
     # Explanatory tactical measurements from the local replay; not a model input.
     tactical = TacticalIndex(root)
+    app.config["TACTICAL"] = tactical  # the map's ring uses the same causal reader
     # AI coach: runs only on request, from a packet of evidence up to the chosen second.
     coach = Coach(root / "coach_cache")
 
@@ -238,7 +239,10 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         if frame is None:
             abort(404)
         frame_ms = (time.perf_counter() - started) * 1000
-        frame["ring"] = ring_at(game_id, frame["t"])
+        try:
+            frame["ring"] = ring_at(game_id, frame["t"])
+        except Exception:  # never let the ring break a frame
+            frame["ring"] = {"state": "unavailable", "location": None, "target": None, "label": "Ring not available at this time"}
         # Recorded facing (yaw) at this exact second, from the local replay. Display only.
         try:
             frame["facing"] = tactical.facing_at(game_id, frame["t"])
@@ -302,6 +306,14 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         if not team:
             return jsonify({"error": "team is required"}), 400
         return jsonify(tactical.at(game_id, t, team))
+
+    @app.get("/api/matches/<int:game_id>/event-timeline")
+    def match_event_timeline(game_id: int):
+        """Display-only ring intervals and squad events. Not a model or coach input."""
+        team = request.args.get("team")
+        if not team:
+            return jsonify({"available": False, "display_only": True, "reason": "team is required"}), 400
+        return jsonify(tactical.event_timeline(game_id, team))
 
     def coach_packet(game_id: int, t: object, team: object) -> tuple[dict, int]:
         try:

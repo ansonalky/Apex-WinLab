@@ -253,3 +253,16 @@ dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
 .side .coach .stale.tip::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 6; width: min(24rem, 80vw); padding: 0.4rem 0.55rem; font-size: 0.8rem; color: #e7e9ee; background: #121418; border: 1px solid #4e79a7; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity 0.1s; }
 .side .coach .stale.tip:hover::after, .side .coach .stale.tip:focus::after { opacity: 1; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.event-timeline { position: relative; margin-top: 0.35rem; }
+.event-timeline[hidden] { display: none !important; }
+.timeline-track { position: relative; height: 2.4rem; background: #1d4e89; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.timeline-interval { position: absolute; top: 0.35rem; height: 0.45rem; background: #f0c14a; border-radius: 2px; }
+.timeline-close { position: absolute; top: 0.2rem; width: 0.55rem; height: 0.55rem; margin-left: -0.28rem; background: #f0c14a; transform: rotate(45deg); }
+.timeline-mark { position: absolute; width: 0.45rem; height: 0.7rem; margin-left: -0.22rem; padding: 0; border: 0; border-radius: 1px; cursor: pointer; }
+.timeline-mark.kill { top: 1.15rem; background: #3dd68c; }
+.timeline-mark.knock { top: 1.45rem; height: 0.45rem; background: #7fd3ea; }
+.timeline-mark.death { top: 1.15rem; background: #e85d4c; }
+.timeline-mark.squad_elimination { top: 1.05rem; height: 0.9rem; width: 0.55rem; margin-left: -0.28rem; background: #e85d4c; box-shadow: inset 0 0 0 2px #fff; }
+.timeline-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; }
+.timeline-legend { margin: 0.3rem 0 0; font-size: 0.75rem; color: #b7beca; }
+.timeline-tip { margin: 0.15rem 0 0; min-height: 1rem; font-size: 0.8rem; }

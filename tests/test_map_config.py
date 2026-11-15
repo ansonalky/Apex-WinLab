@@ -6,7 +6,7 @@ import json
 import unittest
 from pathlib import Path
 
-from map_config import MAP_SIZE, SHORT_NAMES, current_ring, map_cord_r, map_cord_x, map_cord_y, map_key, map_spec, public_config
+from map_config import MAP_SIZE, SHORT_NAMES, map_cord_r, map_cord_x, map_cord_y, map_key, map_spec, public_config
 
 
 class TransformTest(unittest.TestCase):
@@ -48,41 +48,6 @@ class TransformTest(unittest.TestCase):
             spec = map_spec(map_id)
             self.assertIsNotNone(spec)
             self.assertTrue(spec["image"].endswith(f"{map_id}.webp"))
-
-    def test_stage_the_replay_ends_inside_is_not_drawn(self):
-        center = {"x": 0, "y": 0}
-        rings = [
-            {"stage": 0, "start": 10, "end": 20, "startSize": 100, "endSize": 50, "startCenter": center, "endCenter": center},
-            {"stage": 1, "start": 30, "startSize": 50, "endSize": 1, "startCenter": center},
-        ]
-        self.assertEqual(current_ring(rings, 25)["state"], "waiting")
-        self.assertEqual(current_ring(rings, 25)["stage"], 1)
-        late = current_ring(rings, 40)
-        self.assertEqual(late["state"], "closing_unrecorded")
-        self.assertEqual(late["stage"], 1)
-        self.assertIsNone(late["location"])
-
-    def test_worlds_edge_ring_matches_the_replay_formula(self):
-        data = Path(__file__).resolve().parents[1] / "data"
-        manifest = data / "collection" / "manifest.json"
-        if not manifest.is_file():
-            self.skipTest("telemetry is not on this machine")
-        document = json.loads(manifest.read_text(encoding="utf-8"))
-        record = next(row for row in document["games"].values() if row.get("game_id") == 123349)
-        payload = json.loads((Path.cwd() / record["download_path"]).read_text(encoding="utf-8-sig"))
-        rings = payload["match"]["rings"]
-        waiting = current_ring(rings, 100)
-        self.assertEqual(waiting["state"], "waiting")
-        self.assertEqual(waiting["stage"], 0)
-        self.assertEqual(waiting["countdown_s"], 125)
-        self.assertEqual(int(waiting["location"]["x"]), -7820)
-        closing = current_ring(rings, 355)
-        self.assertEqual(closing["state"], "closing")
-        self.assertEqual(closing["countdown_s"], 130)
-        start_r = rings[0]["startSize"]
-        end_r = rings[0]["endSize"]
-        self.assertAlmostEqual(closing["location"]["r"], start_r - 0.5 * (start_r - end_r))
-        self.assertNotIn("future", closing)
 
 
 if __name__ == "__main__":

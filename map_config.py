@@ -11,7 +11,6 @@ Another map's image is never substituted.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 # Exact literals from MAP_SIZE. 52e3 is 52000, 43e3 is 43000, 4e4 is 40000.
@@ -120,68 +119,6 @@ def map_cord_r(value: float, spec: dict) -> float:
     return HALF * (value / spec["x"])
 
 
-def current_ring(rings: list[dict], t: int) -> dict:
-    """Replay currentRingClosing / nextRing / currentRingLocation at clock t.
-
-    Only the current circle is returned. Future stage centers are not included.
-    A stage the replay ends inside has no ``end`` or ``endCenter``. While it
-    closes, no circle is returned: its size and center are not recorded.
-    """
-    ordered = sorted(rings, key=lambda ring: (ring.get("start") or 0, ring.get("stage") or 0))
-    unfinished = next(
-        (ring for ring in ordered if ring.get("start") is not None and ring["start"] < t
-         and (ring.get("end") is None or ring.get("endCenter") is None)),
-        None,
-    )
-    if unfinished is not None:
-        return {
-            "state": "closing_unrecorded",
-            "stage": unfinished.get("stage"),
-            "countdown_s": None,
-            "location": None,
-            "show_future": False,
-        }
-    closing = next((ring for ring in ordered if ring["start"] < t and ring.get("end") is not None and ring["end"] >= t), None)
-    nxt = next((ring for ring in ordered if ring["start"] > t), None)
-    stage = next((ring for ring in ordered if ring.get("end") is None or ring["end"] > t), ordered[-1] if ordered else None)
-    if closing is None:
-        if nxt is not None:
-            location = {
-                "x": nxt["startCenter"]["x"],
-                "y": nxt["startCenter"]["y"],
-                "r": nxt["startSize"],
-            }
-            return {
-                "state": "waiting",
-                "stage": stage.get("stage") if stage else nxt.get("stage"),
-                "countdown_s": nxt["start"] - t,
-                "location": location,
-                "show_future": False,
-            }
-        return {
-            "state": "none",
-            "stage": stage.get("stage") if stage else None,
-            "countdown_s": None,
-            "location": None,
-            "show_future": False,
-        }
-    progress = (t - closing["start"]) / (closing["end"] - closing["start"])
-    start = closing["startCenter"]
-    end = closing["endCenter"]
-    location = {
-        "x": start["x"] + (end["x"] - start["x"]) * progress,
-        "y": start["y"] + (end["y"] - start["y"]) * progress,
-        "r": closing["startSize"] - (closing["startSize"] - closing["endSize"]) * progress,
-    }
-    return {
-        "state": "closing",
-        "stage": closing.get("stage"),
-        "countdown_s": closing["end"] - t,
-        "location": location,
-        "show_future": False,
-    }
-
-
 def public_config(map_id: str) -> dict:
     spec = map_spec(map_id)
     if spec is None:
@@ -202,15 +139,3 @@ def public_config(map_id: str) -> dict:
         "source": IMAGE_SOURCE.format(map_id=map_id),
         "attribution": "Map image from the public Overstat replay, /maps_2048.",
     }
-
-
-def load_rings(data_dir: Path, game_id: int) -> list[dict]:
-    from dashboard_data import _raw_path, _record
-
-    record = _record(data_dir, game_id)
-    path = _raw_path(record, data_dir) if record else None
-    if path is None:
-        return []
-    payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    rings = (payload.get("match") or {}).get("rings") or []
-    return rings if isinstance(rings, list) else []
