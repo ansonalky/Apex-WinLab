@@ -1,3 +1,4 @@
+# Because this project is planned to be expand more in the future, model-pipelin is the main for SanD Hackathon
 # Apex WinLab
 
 Apex WinLab turns recorded professional and competitive Apex Legends match telemetry into a synchronized replay, experimental squad win estimates, and evidence-grounded coaching. It is a historical match explorer and review tool, not a live game assistant.
