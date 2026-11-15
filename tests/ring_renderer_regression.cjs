@@ -16,7 +16,7 @@ function context() {
 }
 for (const state of ['closing','waiting']) for (const zoom of [1,2,4]) {
   const ctx=context();
-  renderer.drawRing(ctx,{state,location:{x:100,y:0,r:500},target:{x:200,y:0,r:100},following_target:{x:220,y:0,r:20}},
+  renderer.drawRing(ctx,{state,observer_preview:true,location:{x:100,y:0,r:500},target:{x:200,y:0,r:100},following_target:{x:220,y:0,r:20}},
     (x,y)=>[30+x*zoom,40-y*zoom],r=>r*zoom,{mapLeft:30,mapTop:40,mapW:400*zoom,mapH:400*zoom});
   assert.equal(ctx.paths.length,3);
   const [orange,gray,dashed]=ctx.paths;
@@ -36,4 +36,15 @@ for (const invalid of [null,{x:0,y:0,r:-1},{x:NaN,y:0,r:10},{x:0,y:0,r:Infinity}
 const ctx=context();renderer.drawRing(ctx,{location:{x:0,y:0,r:500},target:{x:0,y:0,r:100},following_target:null},
   (x,y)=>[x,y],r=>r,{mapLeft:0,mapTop:0,mapW:400,mapH:400});
 assert.equal(ctx.paths.length,2,'unknown following circle has no duplicate dashed fallback');
-console.log('Ring renderer passed: orange exterior, gray disc, distinct dashed destination, zoom/pan alignment and invalid geometry.');
+// The normal map: the next ring is a thin solid white outline; no gray disc and no dashed circle.
+for (const zoom of [1,2,4]) {
+  const ctx=context();
+  renderer.drawRing(ctx,{state:'closing',location:{x:100,y:0,r:500},target:{x:200,y:0,r:100},following_target:{x:220,y:0,r:20}},
+    (x,y)=>[30+x*zoom,40-y*zoom],r=>r*zoom,{mapLeft:30,mapTop:40,mapW:400*zoom,mapH:400*zoom});
+  assert.equal(ctx.paths.length,2,'orange exterior and one white outline only');
+  const [orange,white]=ctx.paths;
+  assert.equal(orange.rule,'evenodd');
+  assert.equal(white.type,'stroke');assert.equal(white.dash.join(','),'','solid, not dashed');
+  assert.deepEqual(white.path[0].slice(0,4),['arc',30+200*zoom,40,100*zoom]);
+}
+console.log('Ring renderer passed: orange exterior, white next-ring outline on the normal map, gray disc and dashed destination in the observer preview, zoom/pan alignment and invalid geometry.');

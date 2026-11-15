@@ -419,9 +419,11 @@ function mapCordR(value, spec) {
   return 1024 * (value / spec.x);
 }
 
-// All three circles share the map projection. Draw them before player markers.
-// Gray is a filled destination, never an annular band. Dashed white is the
-// following destination; it must never reuse the gray circle's geometry.
+// The ring, drawn before player markers through the same map projection. Outside
+// the current boundary is shaded orange and the boundary has no outline. On the
+// normal map the next revealed ring is a thin white outline. Only the observer
+// ring preview (ring.observer_preview) draws its destination as a gray disc and
+// the following destination as a dashed circle, never reusing the gray geometry.
 const RING_RADIUS_MAX = 100000;
 function drawRing(ctx, ring, project, radius, map) {
   const valid = (circle) => circle && Number.isFinite(circle.x) && Number.isFinite(circle.y)
@@ -438,7 +440,20 @@ function drawRing(ctx, ring, project, radius, map) {
     ctx.restore();
   }
   const target = ring && ring.target;
-  if (valid(target)) {
+  const observer = Boolean(ring && ring.observer_preview);
+  if (valid(target) && !observer) {
+    // The normal map: the next revealed ring is a thin white outline.
+    const [tx, ty] = project(target.x, target.y);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(tx, ty, radius(target.r), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (valid(target) && observer) {
+    // Observer ring preview only: the destination is a gray disc and the one after it is dashed.
     const [tx, ty] = project(target.x, target.y);
     ctx.save();
     ctx.fillStyle = "rgba(205, 205, 205, 0.12)";
@@ -447,7 +462,7 @@ function drawRing(ctx, ring, project, radius, map) {
     ctx.fill();
     ctx.restore();
   }
-  const following = ring && ring.following_target;
+  const following = observer && ring.following_target;
   if (valid(following)) {
     const [tx, ty] = project(following.x, following.y);
     ctx.save();
