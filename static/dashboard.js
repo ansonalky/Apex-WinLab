@@ -81,6 +81,7 @@ function compareMatches(a, b) {
 }
 
 async function loadMatches() {
+  const previous = matchSelect.value;
   const matches = (await (await fetch("/api/matches")).json()).sort(compareMatches);
   matchSelect.innerHTML = "";
   for (const match of matches) {
@@ -90,10 +91,11 @@ async function loadMatches() {
     option.textContent = `${tag}${match.event || "Untitled"} · ${match.map_name || "map unknown"} · quality ${num(match.quality_score, 2)}`;
     matchSelect.append(option);
   }
-  // Demo default: the first held-out test game, so the primary view has evidence.
-  // A link from Performance selects one game and does not change seeking.
+  // Sorting does not change the game already on screen. A link from Performance
+  // selects one game. Otherwise the first held-out test game is the demo default.
   const requested = new URLSearchParams(location.search).get("game");
-  const first = matches.find((match) => String(match.game_id) === requested)
+  const first = matches.find((match) => String(match.game_id) === previous)
+    || matches.find((match) => String(match.game_id) === requested)
     || matches.find((match) => match.heldout)
     || matches[0];
   if (first) {

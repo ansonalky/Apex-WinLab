@@ -550,31 +550,73 @@ class HighlightApiTest(unittest.TestCase):
 
 
 class MatchOrderTest(unittest.TestCase):
-    def test_numeric_quality_desc_missing_last_game_id_desc(self):
-        rows = [
-            {"game_id": 1, "quality_score": 8},
-            {"game_id": 3, "quality_score": None},
-            {"game_id": 2, "quality_score": 9},
-            {"game_id": 4, "quality_score": 9},
-            {"game_id": 5, "quality_score": False},
-        ]
-        self.assertEqual([row["game_id"] for row in sort_matches(rows)], [4, 2, 1, 5, 3])
+    def test_dropdown_order_uses_stored_quality_then_game_id(self):
+        from decimal import Decimal
 
-    def test_match_api_uses_that_order(self):
+        rows = [
+            {"game_id": 1, "quality_score": 10.001},
+            {"game_id": 2, "quality_score": 10.004},
+            {"game_id": 9, "quality_score": 8.5},
+            {"game_id": 4, "quality_score": 8.5},
+            {"game_id": 3, "quality_score": 0},
+            {"game_id": 8, "quality_score": None},
+            {"game_id": 7, "quality_score": "8.50"},
+            {"game_id": 6, "quality_score": float("nan")},
+            {"game_id": 5, "quality_score": Decimal("9.10")},
+            {"game_id": 11, "quality_score": True},
+        ]
+        self.assertEqual(
+            [row["game_id"] for row in sort_matches(rows)],
+            [2, 1, 5, 9, 4, 3, 11, 8, 7, 6],
+        )
+        # 10.004 and 10.001 both display as 10.00; the stored numbers stay in that order.
+        self.assertEqual(f"{10.004:.2f}", f"{10.001:.2f}")
+
+    def test_file_and_tiger_lists_share_that_order(self):
+        from contextlib import contextmanager
+
+        from tiger_read import TigerReader
+
+        games = {
+            "1": {"acceptance_status": "accepted", "game_id": 1, "event": "Low", "map_name": "mp", "quality_score": 7.25, "match_start": 1},
+            "30": {"acceptance_status": "accepted", "game_id": 30, "event": "Expansion", "map_name": "mp", "quality_score": 9.5, "match_start": 2},
+            "12": {"acceptance_status": "accepted", "game_id": 12, "event": "Same", "map_name": "mp", "quality_score": 9.5, "match_start": 9},
+            "4": {"acceptance_status": "accepted", "game_id": 4, "event": "Missing", "map_name": "mp", "quality_score": None, "match_start": 3},
+        }
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
             (data / "collection").mkdir()
-            games = {}
-            for game_id, quality in ((1, 1), (2, None), (3, 1), (4, 5)):
-                games[str(game_id)] = {
-                    "acceptance_status": "accepted",
-                    "game_id": game_id,
-                    "quality_score": quality,
-                    "match_start": 1,
-                }
             (data / "collection" / "manifest.json").write_text(json.dumps({"games": games}), encoding="utf-8")
-            matches = create_app(data).test_client().get("/api/matches").get_json()
-        self.assertEqual([row["game_id"] for row in matches], [4, 3, 1, 2])
+            listed = create_app(data, backend="files").test_client().get("/api/matches").get_json()
+        self.assertEqual([row["game_id"] for row in listed], [30, 12, 1, 4])
+        self.assertEqual([row["quality_score"] for row in listed], [9.5, 9.5, 7.25, None])
+
+        class Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class Connection:
+            def execute(self, _query):
+                return Result([
+                    (1, 1, "Low", "mp", 7.25, "org", None, None, 1, "W", "src", False),
+                    (30, 1, "Expansion", "mp", 9.5, "org", None, None, 1, "W", "src", False),
+                    (12, 1, "Same", "mp", 9.5, "org", None, None, 1, "W", "src", False),
+                    (4, 1, "Missing", "mp", None, "org", None, None, 1, "W", "src", False),
+                ])
+
+        reader = TigerReader.__new__(TigerReader)
+
+        @contextmanager
+        def connection():
+            yield Connection()
+
+        reader._connection = connection
+        tiger = reader.list_matches()
+        self.assertEqual([row["game_id"] for row in tiger], [row["game_id"] for row in listed])
+        self.assertEqual([row["event"] for row in tiger], ["Expansion", "Same", "Low", "Missing"])
 
 
 class ExpansionCollectionTest(unittest.TestCase):

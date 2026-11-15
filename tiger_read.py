@@ -29,7 +29,6 @@ SELECT m.game_id, m.session_id, m.event, m.map_name, m.quality_score, m.organize
        m.match_start, m.evaluation_split, m.winner_team_id, m.winner_team_name, m.winner_label_source,
        EXISTS (SELECT 1 FROM squad_estimates e WHERE e.game_id = m.game_id AND e.prediction_kind = 'held_out')
 FROM matches m
-ORDER BY m.match_start NULLS LAST, m.game_id
 """
 
 MATCH = """

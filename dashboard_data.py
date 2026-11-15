@@ -18,7 +18,9 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -69,29 +71,50 @@ def _leaf(row: dict, *path: str) -> Any:
     return value
 
 
-def _numeric_quality(value: Any) -> float | None:
-    """A real quality score. Booleans, strings, and missing values are not scores."""
-    if isinstance(value, bool) or isinstance(value, str) or value is None:
+def numeric_quality(value: Any) -> Decimal | None:
+    """The stored quality number. Display text and non-numbers are not used."""
+    if isinstance(value, bool) or value is None:
         return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
+    if isinstance(value, Decimal):
+        number = value
+    elif isinstance(value, int):
+        number = Decimal(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+    else:
         return None
-    if number != number or number in (float("inf"), float("-inf")):
+    if not number.is_finite():
         return None
     return number
 
 
+def _game_id_number(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return None
+
+
 def sort_matches(rows: list[dict]) -> list[dict]:
-    """Numeric quality descending, missing scores last, game id descending on ties."""
+    """Highest stored quality first. Missing quality last. Ties by game id descending."""
 
     def key(item: dict) -> tuple:
-        score = _numeric_quality(item.get("quality_score"))
-        try:
-            game_key = -int(item.get("game_id"))
-        except (TypeError, ValueError):
-            game_key = 0
-        return (score is None, -(score if score is not None else 0.0), game_key)
+        quality = numeric_quality(item.get("quality_score"))
+        game_id = _game_id_number(item.get("game_id"))
+        return (
+            quality is None,
+            -(quality if quality is not None else Decimal(0)),
+            game_id is None,
+            -(game_id if game_id is not None else 0),
+        )
 
     return sorted(rows, key=key)
 
