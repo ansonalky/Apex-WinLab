@@ -1,4 +1,4 @@
-// AI tactical review: runs only when "Analyze this situation" is clicked, for
+// AI tactical review: runs only on an explicit Analyze or Start demo click, for
 // the match, squad and second shown at that moment. The request never blocks
 // seeking. A review stays labeled with its own second when the replay moves.
 // After an error the old review is removed, never shown as if it were new.
@@ -300,11 +300,14 @@ window.Coach = (() => {
     }
   }
 
-  function start() {
-    if (running) return;
+  async function start(expected = null) {
+    if (running) return false;
     const request = context();
-    if (!request) return;
-    run(request);
+    if (!request) return false;
+    if (expected && expected.game != null && (String(request.game) !== String(expected.game)
+      || String(request.team) !== String(expected.team) || request.t !== expected.t)) return false;
+    await run(request);
+    return true;
   }
 
   function onClick(event) {
@@ -365,5 +368,5 @@ window.Coach = (() => {
     }
   }
 
-  return { init, update, reset, helpers: { esc, clock, chips, itemsById, withoutCondition, firstSentence, nextMove, teamsFor } };
+  return { init, update, reset, start, helpers: { esc, clock, chips, itemsById, withoutCondition, firstSentence, nextMove, teamsFor } };
 })();

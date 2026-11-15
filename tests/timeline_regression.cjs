@@ -26,6 +26,12 @@ function harness() {
   return {api, sync, finish, pending, root, head, tip, track, captured, sought, listeners, documentListeners, target};
 }
 (async () => {
+  const ready=harness();
+  const loading=ready.sync();
+  const alsoWaiting=ready.sync(1,20,15);
+  assert.equal(loading,alsoWaiting,'same-selection sync awaits the pending timeline render');
+  ready.finish(0);await alsoWaiting;
+  assert.equal(ready.head['aria-valuenow'],'15');
   const h = harness();
   let a = h.sync();
   h.finish(0, [{kind:'kill',elapsed:10,text:'Old squad'}]); await a;
@@ -132,7 +138,9 @@ function harness() {
   assert.match(fs.readFileSync('static/timeline.css','utf8'),/touch-action: none/);
 
   const d=fs.readFileSync('static/dashboard.js','utf8');
-  assert.match(d,/async function loadMatchBody\(gameId\) \{\s*if \(window.EventTimeline\) window.EventTimeline.reset\(\)/);
-  assert.match(d,/function applySquadSelection\(\) \{\s*if \(window.EventTimeline\) window.EventTimeline.reset\(\)/);
+  const init=d.slice(d.indexOf('async function loadMatchBody('),d.indexOf('  const token',d.indexOf('async function loadMatchBody(')));
+  assert.match(init,/window.EventTimeline.reset\(\)/);
+  const selection=d.slice(d.indexOf('function applySquadSelection('),d.indexOf('  loadHighlights();',d.indexOf('function applySquadSelection(')));
+  assert.match(selection,/window.EventTimeline.reset\(\)/);
   console.log('Timeline regressions passed: selection/reset races, late responses, exact seeking, overlap picker, keyboard, dismissal, ring markers, mouse/touch/pen dragging, capture, cancellation, outside release.');
 })().catch(error=>{console.error(error); process.exitCode=1;});

@@ -76,7 +76,7 @@ window.Tactical = (() => {
     if (mine !== token) return;
     if (!data.available) {
       box.innerHTML = `<p class="unavailable">Not available: ${esc(data.reason || "")}</p>`;
-      return;
+      return data;
     }
     box.innerHTML = `<p class="when">Measured at ${clock(data.elapsed)} for ${esc(teamName(squads, data.team))}. Not used by the model; the estimate does not include it.</p>
       ${ringPart(data.ring)}
@@ -85,7 +85,12 @@ window.Tactical = (() => {
       ${elevationPart(data.elevation)}
       ${qualityPart(data.quality)}
       <details ${window.UI.keep("tactical-limits")}><summary>What these measurements do not show</summary><ul>${data.limits.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></details>`;
+    return data;
   }
 
-  return { load };
+  function reset() {
+    token += 1;
+    if (box) box.innerHTML = '<p class="when">Loading…</p>';
+  }
+  return { load, reset };
 })();

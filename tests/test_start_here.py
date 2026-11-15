@@ -51,12 +51,26 @@ class StartHereMoment(unittest.TestCase):
         naggi = next(player for player in after["players"] if player["name"] == "NAGGI")
         self.assertEqual(naggi["status"], "downed")
 
+    @unittest.skipUnless((DATA / "raw").is_dir(), "local replay data not present")
+    def test_demo_frame_and_direct_ring_match_at_18_47(self):
+        from app import create_app
+        client = create_app(DATA, backend="files").test_client()
+        summary = client.get("/api/matches/123633").get_json()
+        t = summary["playing_start"] + 1127
+        frame = client.get(f"/api/matches/123633/at/{t}").get_json()
+        ring = client.get(f"/api/matches/123633/ring?t={t}").get_json()
+        self.assertEqual(frame["elapsed"], 1127)
+        self.assertEqual(frame["ring"], ring)
+        self.assertEqual(ring["state"], "closing_target_unknown")
+        self.assertIsNone(ring["location"])
+        self.assertIsNone(ring["target"])
+
 
 class StartHerePage(unittest.TestCase):
-    def test_header_and_deep_link_do_not_request_a_review(self):
+    def test_demo_is_explicit_and_deep_links_do_not_request_a_review(self):
         page = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="start-here"', page)
-        self.assertIn("Explore the moment, then review the decision.", page)
+        self.assertIn("Opens an example and loads a coach review.", page)
         self.assertIn('id="ai-announcer"', page)
         self.assertIn('aria-live="polite"', page)
         script = (STATIC / "dashboard.js").read_text(encoding="utf-8")
@@ -64,10 +78,12 @@ class StartHerePage(unittest.TestCase):
         self.assertIn('const START_TEAM = "20"', script)
         self.assertIn("const START_ELAPSED = 18 * 60 + 47", script)
         self.assertIn("function linkedSliderTime", script)
-        body = script.split("async function startHere", 1)[1].split("async function loadMatch", 1)[0]
+        body = script.split("function startHere", 1)[1].split("async function loadMatch", 1)[0]
         self.assertNotIn("/coach", body)
         self.assertNotIn("decision-review", body)
-        self.assertNotIn("Coach", body)
+        self.assertIn("window.Coach.start", body)
+        self.assertIn("await seek(START_ELAPSED", body)
+        self.assertIn("demoMomentConfirmed()", body)
         self.assertNotIn("DecisionReview", body)
         for name in ("dashboard.js", "coach.js", "decision.js", "review_status.js"):
             source = (STATIC / name).read_text(encoding="utf-8")

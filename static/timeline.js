@@ -4,6 +4,7 @@ window.EventTimeline = (() => {
   let key = null, generation = 0, controller = null, payload = null;
   let seekTo = () => {}, shownElapsed = 0, duration = 0, groups = [];
   let activeGroup = null, pinned = false;
+  let pendingPromise = null;
   let scrub = null, suppressClick = false;
   const SLOP = 5;
   const finite = (value) => typeof value === "number" && Number.isFinite(value);
@@ -31,6 +32,7 @@ window.EventTimeline = (() => {
     controller = null;
     key = null;
     payload = null;
+    pendingPromise = null;
     groups = [];
     activeGroup = null;
     pinned = false;
@@ -215,7 +217,7 @@ window.EventTimeline = (() => {
     document.addEventListener("pointerdown", (event) => { if (!root.contains(event.target)) dismiss(); });
   }
 
-  async function sync(options) {
+  function sync(options) {
     if (!root || !options) return;
     const nextKey = `${options.gameId}:${options.team}`;
     if (key !== nextKey) reset();
@@ -225,12 +227,13 @@ window.EventTimeline = (() => {
     duration = finite(options.duration) && options.duration > 0 ? options.duration : 0;
     if (key === nextKey) {
       if (!dragging) movePlayhead();
-      return;
+      return pendingPromise;
     }
     key = nextKey;
     const mine = generation;
     controller = new AbortController();
     const signal = controller.signal;
+    pendingPromise = (async () => {
     try {
       const response = await fetch(`/api/matches/${options.gameId}/event-timeline?team=${encodeURIComponent(options.team)}`, { signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -244,8 +247,10 @@ window.EventTimeline = (() => {
       root.hidden = false;
       root.innerHTML = `<p class="unavailable">Event timeline could not be loaded.</p>`;
     } finally {
-      if (mine === generation) controller = null;
+      if (mine === generation) { controller = null; pendingPromise = null; }
     }
+    })();
+    return pendingPromise;
   }
   return { sync, reset };
 })();

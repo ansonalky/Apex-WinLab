@@ -260,47 +260,82 @@ function rememberStartLink() {
   history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
 }
 
-// Opens the checked demo moment. It never requests a situation or decision review.
-// A match that is already loaded is only reselected and seeked, so the map
-// camera stays where it is. map_view.js resets the camera itself when the map changes.
-async function startHere() {
+// A demo click explicitly authorizes one review, only after replay synchronization.
+let demoRun = null;
+let demoEpoch = 0;
+let demoReviewStarted = false;
+function cancelDemo() {
+  if (!demoRun || demoReviewStarted) return;
+  demoEpoch += 1;
+  setStartStatus("Demo cancelled because the selection changed.");
+}
+function demoMomentConfirmed() {
+  return summary && String(summary.game_id) === START_GAME && matchSelect.value === START_GAME
+    && selectedTeam() === START_TEAM && Number(timeInput.value) === START_ELAPSED
+    && frame && frame.elapsed === START_ELAPSED && frame.t === replayStart() + START_ELAPSED;
+}
+function startHere() {
+  if (demoRun) return demoRun;
+  const mine = ++demoEpoch;
+  demoReviewStarted = false;
+  const button = document.querySelector("#start-here");
+  if (button) button.disabled = true;
   showStartHint();
-  const listed = [...matchSelect.options].some((option) => option.value === START_GAME);
-  if (!listed) {
-    setStartStatus("Demo match 123633 is not available.", true);
-    return;
-  }
-  rememberStartLink();
-  const ready = summary && String(summary.game_id) === START_GAME && !timeInput.disabled;
-  if (!ready) {
-    if (activeLoad && matchSelect.value === START_GAME) await activeLoad;
-    else {
-      matchSelect.value = START_GAME;
-      await loadMatch(START_GAME);
+  setStartStatus("Loading demo…");
+  const current = () => mine === demoEpoch;
+  demoRun = Promise.resolve().then(async () => {
+    try {
+      if (!current()) return;
+      if (![...matchSelect.options].some((option) => option.value === START_GAME)) throw new Error("Demo match 123633 is not available.");
+      rememberStartLink();
+      const ready = summary && String(summary.game_id) === START_GAME && !timeInput.disabled;
+      if (!ready) {
+        if (activeLoad && matchSelect.value === START_GAME) await activeLoad;
+        else { matchSelect.value = START_GAME; await loadMatch(START_GAME, { demo: true }); }
+      }
+      if (!current()) return;
+      if (!summary || String(summary.game_id) !== START_GAME) throw new Error("Demo match 123633 could not be loaded.");
+      if (![...squadSelect.options].some((option) => option.value === START_TEAM)) throw new Error("EQT (team 20) is not in this match.");
+      if (Number(timeInput.max) < START_ELAPSED) throw new Error("18:47 is outside this replay.");
+      squadSelect.value = START_TEAM;
+      applySquadSelection({ demo: true });
+      timeInput.value = String(START_ELAPSED);
+      await seek(START_ELAPSED, { demo: true });
+      if (!current()) return;
+      if (!demoMomentConfirmed()) throw new Error("The demo frame could not be synchronized. Try Start demo again.");
+      const game = summary.game_id, t = frame.t;
+      clearTimeout(tacticalTimer);
+      const [verifiedRing, tactical] = await Promise.all([
+        getJSON(`/api/matches/${game}/ring?t=${t}`),
+        window.Tactical ? window.Tactical.load(game, t, START_TEAM, summary.squads) : null,
+        syncTimeline(),
+      ]);
+      if (!current() || !demoMomentConfirmed()) return;
+      if (verifiedRing.t !== t) throw new Error("The ring response did not match the demo second.");
+      // Always replace earlier geometry, including with a final-ring unavailable state.
+      frame.ring = verifiedRing;
+      currentRing = verifiedRing;
+      draw();
+      if (!tactical || tactical.t !== t || String(tactical.team) !== START_TEAM) throw new Error("The tactical panel could not be synchronized. Try Start demo again.");
+      if (!window.Coach || !window.Coach.start) throw new Error("The coach is unavailable. Try again after reloading.");
+      demoReviewStarted = true;
+      setStartStatus("Loading the EQT review for 18:47…");
+      const started = await window.Coach.start({ game, team: START_TEAM, t });
+      if (started === false) throw new Error("Another review is running or the selection changed. Try Start demo again when it finishes.");
+      setStartStatus(demoMomentConfirmed() ? "" : "The demo review is for EQT at 18:47; the current selection has changed.");
+    } catch (error) {
+      if (current()) setStartStatus(error.message || "The demo could not be loaded. Try again.", true);
+    } finally {
+      demoRun = null;
+      demoReviewStarted = false;
+      if (button) button.disabled = false;
     }
-  }
-  if (!summary || String(summary.game_id) !== START_GAME) {
-    setStartStatus("Demo match 123633 could not be loaded.", true);
-    timeInput.disabled = false;
-    return;
-  }
-  if (![...squadSelect.options].some((option) => option.value === START_TEAM)) {
-    setStartStatus("EQT (team 20) is not in this match.", true);
-    return;
-  }
-  const maxElapsed = Number(timeInput.max);
-  if (!(maxElapsed >= START_ELAPSED)) {
-    setStartStatus("18:47 is outside this replay.", true);
-    return;
-  }
-  squadSelect.value = START_TEAM;
-  applySquadSelection();
-  timeInput.value = String(START_ELAPSED);
-  seek(START_ELAPSED);
-  setStartStatus("");
+  });
+  return demoRun;
 }
 
-async function loadMatch(gameId) {
+async function loadMatch(gameId, options = {}) {
+  if (!options.demo) cancelDemo();
   const run = loadMatchBody(gameId);
   activeLoad = run;
   try {
@@ -311,6 +346,7 @@ async function loadMatch(gameId) {
 }
 
 async function loadMatchBody(gameId) {
+  if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
   if (window.EventTimeline) window.EventTimeline.reset();
   if (window.ObserverRing) window.ObserverRing.reset();
   const token = ++requestToken;
@@ -396,22 +432,29 @@ async function loadMatchBody(gameId) {
 
 // The selected time shows at once; the displayed frame's own time is labeled
 // separately until the response for the selection arrives.
-function seek(elapsed) {
+function seek(elapsed, options = {}) {
+  if (!options.demo) cancelDemo();
+  if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
   clock.textContent = mmss(elapsed);
   shown.textContent = frame ? `loading · showing ${mmss(frame.elapsed)}` : "loading";
   if (inFlight) {
     pendingSeek = elapsed;
-    return;
+    return inFlight.promise;
   }
-  loadFrame(elapsed);
+  return loadFrame(elapsed);
 }
 
 // One request returns everything for one second: frame, ring and the
 // predictions made at that second, so they always share a timestamp.
-async function loadFrame(elapsed) {
+function loadFrame(elapsed) {
   const token = ++requestToken;
   const controller = new AbortController();
-  inFlight = { token, controller };
+  const request = { token, controller, promise: null };
+  inFlight = request;
+  request.promise = loadFrameBody(elapsed, request);
+  return request.promise;
+}
+async function loadFrameBody(elapsed, { token, controller }) {
   const t = replayStart() + elapsed;
   let next = null;
   try {
@@ -439,8 +482,8 @@ async function loadFrame(elapsed) {
   if (pendingSeek !== null) {
     const latest = pendingSeek;
     pendingSeek = null;
-    loadFrame(latest);
-    if (frame) shown.textContent = `loading · showing ${mmss(frame.elapsed)}`;
+    await loadFrame(latest);
+    if (frame) shown.textContent = frame.elapsed === Number(timeInput.value) ? "" : `showing ${mmss(frame.elapsed)} (latest stored second)`;
   } else if (frame) {
     shown.textContent = frame.elapsed === Number(timeInput.value) ? "" : `showing ${mmss(frame.elapsed)} (latest stored second)`;
     loadTactical();
@@ -1161,7 +1204,9 @@ altHighlights.addEventListener("click", (event) => {
 
 // Map dots, probability tables, and the squad dropdown share this path.
 // It does not seek, reset the map camera, or request an AI review.
-function applySquadSelection() {
+function applySquadSelection(options = {}) {
+  if (!options.demo) cancelDemo();
+  if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
   if (window.EventTimeline) window.EventTimeline.reset();
   loadHighlights();
   if (!frame) return;
@@ -1176,7 +1221,7 @@ function applySquadSelection() {
 
 function syncTimeline() {
   if (!window.EventTimeline || !summary) return;
-  safely(() => window.EventTimeline.sync({
+  return safely(() => window.EventTimeline.sync({
     gameId: summary.game_id,
     team: selectedTeam(),
     elapsed: frame ? frame.elapsed : Number(timeInput.value) || 0,
