@@ -1,0 +1,441 @@
+{
+  "generated_at": "2026-11-15T02:17:04+00:00",
+  "experiment": "tactical features against a corrected condition baseline",
+  "question": "Do elevation, observed fire pressure, and revealed ring access improve prediction beyond squad condition?",
+  "deployed": false,
+  "replaces_current_predictions": false,
+  "frozen_l2": 0.01,
+  "l2_note": "Taken from config/frozen_evaluation.json. Not re-selected.",
+  "representation": "Additive conditional logit. Each squad's score is a weighted sum of its own columns, then a softmax across the squads at that timestamp. Weights are unconstrained. Elevation is not multiplied by pressure, distance, or ring state, so the fit cannot express 'height matters only in this context'. A column shared by every squad at one timestamp cancels.",
+  "feature_sets": {
+    "corrected_condition": [
+      "players_alive",
+      "players_downed",
+      "players_out",
+      "players_status_unknown",
+      "no_standing",
+      "standing_hp_frac",
+      "standing_hp_missing",
+      "downed_bleed_frac",
+      "downed_bleed_missing"
+    ],
+    "condition_elevation": [
+      "players_alive",
+      "players_downed",
+      "players_out",
+      "players_status_unknown",
+      "no_standing",
+      "standing_hp_frac",
+      "standing_hp_missing",
+      "downed_bleed_frac",
+      "downed_bleed_missing",
+      "elev_mean_dz",
+      "elev_higher_than",
+      "elev_lower_than",
+      "elev_missing"
+    ],
+    "condition_pressure": [
+      "players_alive",
+      "players_downed",
+      "players_out",
+      "players_status_unknown",
+      "no_standing",
+      "standing_hp_frac",
+      "standing_hp_missing",
+      "downed_bleed_frac",
+      "downed_bleed_missing",
+      "fire_opponent_damage",
+      "fire_attacking_squads",
+      "prox_near_squads",
+      "prox_medium_squads",
+      "prox_occupied_sectors",
+      "prox_nearest",
+      "prox_nearest_missing",
+      "stale_opponents_excluded",
+      "squad_fresh_frac",
+      "squad_fresh_missing"
+    ],
+    "condition_ring": [
+      "players_alive",
+      "players_downed",
+      "players_out",
+      "players_status_unknown",
+      "no_standing",
+      "standing_hp_frac",
+      "standing_hp_missing",
+      "downed_bleed_frac",
+      "downed_bleed_missing",
+      "ring_outside_frac",
+      "ring_boundary_rel",
+      "ring_access_missing"
+    ],
+    "combined": [
+      "players_alive",
+      "players_downed",
+      "players_out",
+      "players_status_unknown",
+      "no_standing",
+      "standing_hp_frac",
+      "standing_hp_missing",
+      "downed_bleed_frac",
+      "downed_bleed_missing",
+      "elev_mean_dz",
+      "elev_higher_than",
+      "elev_lower_than",
+      "elev_missing",
+      "fire_opponent_damage",
+      "fire_attacking_squads",
+      "prox_near_squads",
+      "prox_medium_squads",
+      "prox_occupied_sectors",
+      "prox_nearest",
+      "prox_nearest_missing",
+      "stale_opponents_excluded",
+      "squad_fresh_frac",
+      "squad_fresh_missing",
+      "ring_outside_frac",
+      "ring_boundary_rel",
+      "ring_access_missing"
+    ]
+  },
+  "development_games": 45,
+  "development_sessions": 18,
+  "checkpoints": 1807,
+  "frozen_test_games_excluded": [
+    123633,
+    123639,
+    123644,
+    123658,
+    123659,
+    123662
+  ],
+  "dropped_games": [],
+  "coverage": {
+    "rows": 33418,
+    "elevation_known": 14600,
+    "nearest_opponent_known": 22412,
+    "ring_access_known": 18698,
+    "standing_hp_known": 24278,
+    "fresh_position_known": 24752
+  },
+  "timing_s": {
+    "features": 51.0,
+    "fits": 377.5,
+    "total": 438.8
+  },
+  "metrics": "Session mean of game-mean log loss and Brier, on eligibility-constrained probabilities. Lower is better.",
+  "train_to_validation": {
+    "sessions": 4,
+    "levels": {
+      "corrected_condition": {
+        "sessions": 4,
+        "log_loss": 2.5333053105805696,
+        "brier": 0.89783355240132
+      },
+      "condition_elevation": {
+        "sessions": 4,
+        "log_loss": 2.549842448646548,
+        "brier": 0.9030311218813935
+      },
+      "condition_pressure": {
+        "sessions": 4,
+        "log_loss": 2.5314092738826544,
+        "brier": 0.8975723340661756
+      },
+      "condition_ring": {
+        "sessions": 4,
+        "log_loss": 2.5252920411432838,
+        "brier": 0.8966990498803957
+      },
+      "combined": {
+        "sessions": 4,
+        "log_loss": 2.5382951918772982,
+        "brier": 0.9019429403445494
+      }
+    },
+    "minus_corrected_condition": {
+      "condition_elevation": {
+        "log_loss": {
+          "sessions": 4,
+          "mean_diff": 0.01653713806597845,
+          "ci95": [
+            -0.015032061018484644,
+            0.04810633715044155
+          ],
+          "sessions_better": 2,
+          "sessions_worse": 2,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 4,
+          "mean_diff": 0.005197569480073411,
+          "ci95": [
+            0.002362638116347404,
+            0.008439630582912055
+          ],
+          "sessions_better": 0,
+          "sessions_worse": 4,
+          "sessions_tied": 0,
+          "includes_zero": false
+        }
+      },
+      "condition_pressure": {
+        "log_loss": {
+          "sessions": 4,
+          "mean_diff": -0.001896036697915049,
+          "ci95": [
+            -0.05707992127338979,
+            0.037559284680294014
+          ],
+          "sessions_better": 1,
+          "sessions_worse": 3,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 4,
+          "mean_diff": -0.0002612183351443087,
+          "ci95": [
+            -0.008352711076791225,
+            0.00515389037184194
+          ],
+          "sessions_better": 1,
+          "sessions_worse": 3,
+          "sessions_tied": 0,
+          "includes_zero": true
+        }
+      },
+      "condition_ring": {
+        "log_loss": {
+          "sessions": 4,
+          "mean_diff": -0.00801326943728553,
+          "ci95": [
+            -0.029133885551324568,
+            0.00999720161262696
+          ],
+          "sessions_better": 3,
+          "sessions_worse": 1,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 4,
+          "mean_diff": -0.0011345025209243131,
+          "ci95": [
+            -0.00400585804731815,
+            0.000733964726158054
+          ],
+          "sessions_better": 2,
+          "sessions_worse": 2,
+          "sessions_tied": 0,
+          "includes_zero": true
+        }
+      },
+      "combined": {
+        "log_loss": {
+          "sessions": 4,
+          "mean_diff": 0.0049898812967287265,
+          "ci95": [
+            -0.06099045178876472,
+            0.0638509096925911
+          ],
+          "sessions_better": 1,
+          "sessions_worse": 3,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 4,
+          "mean_diff": 0.00410938794322932,
+          "ci95": [
+            -0.0037837743664205226,
+            0.010493599084809346
+          ],
+          "sessions_better": 1,
+          "sessions_worse": 3,
+          "sessions_tied": 0,
+          "includes_zero": true
+        }
+      }
+    }
+  },
+  "leave_one_session_out": {
+    "sessions": 18,
+    "levels": {
+      "corrected_condition": {
+        "sessions": 18,
+        "log_loss": 2.460400692196679,
+        "brier": 0.8907616322503961
+      },
+      "condition_elevation": {
+        "sessions": 18,
+        "log_loss": 2.4697273678394285,
+        "brier": 0.892695405307558
+      },
+      "condition_pressure": {
+        "sessions": 18,
+        "log_loss": 2.466024079777304,
+        "brier": 0.8910894787386893
+      },
+      "condition_ring": {
+        "sessions": 18,
+        "log_loss": 2.458539312796479,
+        "brier": 0.891054716112364
+      },
+      "combined": {
+        "sessions": 18,
+        "log_loss": 2.473934347860198,
+        "brier": 0.8933195520045033
+      }
+    },
+    "minus_corrected_condition": {
+      "condition_elevation": {
+        "log_loss": {
+          "sessions": 18,
+          "mean_diff": 0.009326675642749619,
+          "ci95": [
+            0.0018268953321465028,
+            0.01823815416998325
+          ],
+          "sessions_better": 6,
+          "sessions_worse": 12,
+          "sessions_tied": 0,
+          "includes_zero": false
+        },
+        "brier": {
+          "sessions": 18,
+          "mean_diff": 0.0019337730571619078,
+          "ci95": [
+            0.0007682906378306141,
+            0.003295952457072593
+          ],
+          "sessions_better": 2,
+          "sessions_worse": 16,
+          "sessions_tied": 0,
+          "includes_zero": false
+        }
+      },
+      "condition_pressure": {
+        "log_loss": {
+          "sessions": 18,
+          "mean_diff": 0.0056233875806251075,
+          "ci95": [
+            -0.008333339669749314,
+            0.01797350057764034
+          ],
+          "sessions_better": 9,
+          "sessions_worse": 9,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 18,
+          "mean_diff": 0.0003278464882932967,
+          "ci95": [
+            -0.0018218898959862135,
+            0.002350002687376038
+          ],
+          "sessions_better": 9,
+          "sessions_worse": 9,
+          "sessions_tied": 0,
+          "includes_zero": true
+        }
+      },
+      "condition_ring": {
+        "log_loss": {
+          "sessions": 18,
+          "mean_diff": -0.0018613794002002087,
+          "ci95": [
+            -0.00875764131016051,
+            0.004844563653718116
+          ],
+          "sessions_better": 9,
+          "sessions_worse": 9,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 18,
+          "mean_diff": 0.0002930838619678331,
+          "ci95": [
+            -0.0009988206106483519,
+            0.0016433733949457524
+          ],
+          "sessions_better": 8,
+          "sessions_worse": 10,
+          "sessions_tied": 0,
+          "includes_zero": true
+        }
+      },
+      "combined": {
+        "log_loss": {
+          "sessions": 18,
+          "mean_diff": 0.01353365566351878,
+          "ci95": [
+            -0.003590914647904237,
+            0.031147711105851548
+          ],
+          "sessions_better": 7,
+          "sessions_worse": 11,
+          "sessions_tied": 0,
+          "includes_zero": true
+        },
+        "brier": {
+          "sessions": 18,
+          "mean_diff": 0.0025579197541072776,
+          "ci95": [
+            3.5360926719950494e-05,
+            0.005022576399133011
+          ],
+          "sessions_better": 6,
+          "sessions_worse": 12,
+          "sessions_tied": 0,
+          "includes_zero": false
+        }
+      }
+    },
+    "worst_combined_sessions": [
+      {
+        "session_id": 23240,
+        "games": 3,
+        "condition_log_loss": 2.5600143426925985,
+        "combined_log_loss": 2.6439963612533126,
+        "combined_minus_condition": 0.08398201856071408
+      },
+      {
+        "session_id": 23262,
+        "games": 4,
+        "condition_log_loss": 2.562156756075063,
+        "combined_log_loss": 2.6340314592254286,
+        "combined_minus_condition": 0.0718747031503657
+      },
+      {
+        "session_id": 23257,
+        "games": 2,
+        "condition_log_loss": 2.5660882766638027,
+        "combined_log_loss": 2.6241173258761914,
+        "combined_minus_condition": 0.05802904921238872
+      },
+      {
+        "session_id": 23232,
+        "games": 2,
+        "condition_log_loss": 2.490547260651091,
+        "combined_log_loss": 2.534539205956661,
+        "combined_minus_condition": 0.043991945305569935
+      },
+      {
+        "session_id": 23222,
+        "games": 3,
+        "condition_log_loss": 2.5446641369364023,
+        "combined_log_loss": 2.5856344652604273,
+        "combined_minus_condition": 0.04097032832402503
+      }
+    ]
+  },
+  "elevation_weight_standardized": {
+    "train_fit_condition_elevation": 0.026223028930220944,
+    "train_fit_combined": 0.031189025460799172,
+    "note": "Weight on standardized elev_mean_dz. Not constrained to be positive."
+  }
+}
