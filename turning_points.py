@@ -299,6 +299,9 @@ def detect_turning_points(
                     "prediction_kind": kind,
                     "provenance": provenance,
                     "windows_merged": len(members),
+                    # The merged episode can be longer than the reported window.
+                    "episode_start_t": members[0]["start_t"],
+                    "episode_end_t": group["end"],
                     "seek": {"game_id": game_id, "t": best["start_t"], "elapsed": best["start_elapsed"]},
                 }
                 highlights.append(_attach(highlight, events or [], best["team_id"]))
@@ -330,13 +333,15 @@ def highlights_for_game(
     min_change_pp: float = 5.0,
     limit: int = 3,
     conclusion_t: int | None = None,
+    live: LivePredictions | None = None,
 ) -> dict:
     """Per-second highlights for one game, or the missing artifact.
 
     Does not invent probabilities when ``LivePredictions`` cannot build a table.
+    Pass the dashboard's ``live`` to reuse its cached prediction tables.
     """
     data_dir = Path(data_dir)
-    live = LivePredictions(data_dir)
+    live = live or LivePredictions(data_dir)
     if kind not in (HELD_OUT, FINAL) or not live.available(game_id, kind):
         return {
             "available": False,

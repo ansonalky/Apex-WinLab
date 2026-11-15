@@ -44,6 +44,8 @@ class TurningPointTest(unittest.TestCase):
         self.assertEqual((highlight["start_t"], highlight["end_t"]), (15, 20))
         self.assertEqual((highlight["before"], highlight["after"]), (0.10, 0.40))
         self.assertGreater(highlight["windows_merged"], 1)
+        self.assertLessEqual(highlight["episode_start_t"], highlight["start_t"])
+        self.assertGreaterEqual(highlight["episode_end_t"], highlight["end_t"])
         self.assertEqual(highlight["seek"], {"game_id": 7, "t": 15, "elapsed": -85})
         self.assertIn("No knocks, revives, damage", highlight["description"])
 
