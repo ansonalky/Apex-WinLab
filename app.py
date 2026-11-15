@@ -24,6 +24,7 @@ from flask import Flask, abort, jsonify, render_template, request
 
 from coach import Coach, build_packet
 from dashboard_data import MatchStore
+from decision_review import DECISION, build_decision_packet
 from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
 from tactical import TacticalIndex
@@ -214,6 +215,33 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         if built.get("status") != "ok":
             return jsonify(built), code
         return jsonify(coach.analyze(built["packet"]) | {"packet": built["packet"]})
+
+    def decision_packet(game_id: int, args: dict) -> tuple[dict, int]:
+        try:
+            start_t, episode_start_t = int(args.get("start_t")), int(args.get("episode_start_t"))
+            decision_t = None if args.get("decision_t") in (None, "") else int(args.get("decision_t"))
+        except (TypeError, ValueError):
+            return {"status": "invalid", "reason": "start_t and episode_start_t are required integers"}, 400
+        team = args.get("team")
+        if not team:
+            return {"status": "invalid", "reason": "team is required"}, 400
+        built = build_decision_packet(store=store, live=live, tactical=tactical, highlights=highlights, root=root,
+                                      game_id=game_id, team=team, kind=args.get("kind", ""), start_t=start_t,
+                                      episode_start_t=episode_start_t, decision_t=decision_t)
+        return built, 400 if built.get("status") == "invalid" else 200
+
+    @app.get("/api/matches/<int:game_id>/decision-review/packet")
+    def match_decision_packet(game_id: int):
+        built, code = decision_packet(game_id, request.args)
+        return jsonify(built), code
+
+    @app.post("/api/matches/<int:game_id>/decision-review")
+    def match_decision_review(game_id: int):
+        """AI review of one downward episode at a decision time; runs only on request."""
+        built, code = decision_packet(game_id, request.get_json(silent=True) or {})
+        if built.get("status") != "ok":
+            return jsonify(built), code
+        return jsonify(coach.analyze(built["packet"], DECISION) | {"packet": built["packet"], "suggested_t": built["suggested_t"]})
 
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):

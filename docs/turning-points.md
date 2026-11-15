@@ -80,3 +80,5 @@ result = highlights_for_game(data_dir, game_id, "held_out", squad_id=None, live=
 ```
 
 `detect_turning_points(predictions, events)` is the pure function. A prediction row is `t`, `elapsed`, `team_id`, `team_name`, `probability`, `kind`, and `provenance`.
+
+Each decrease has a **Review decision** button for an AI review of the moment before it; see [decision-review.md](decision-review.md).

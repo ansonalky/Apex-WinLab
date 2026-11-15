@@ -28,6 +28,7 @@
       <span id="clock">00:00</span>
       <span id="shown" class="when" aria-live="polite"></span>
     </label>
+    <p id="decision-pin" class="decision-pin" hidden></p>
   </section>
   <p id="outcome" class="outcome" hidden></p>
   <p id="match-meta" class="meta"></p>
@@ -54,11 +55,14 @@
       <div id="tactical" class="panel"></div>
       <h2>AI tactical review <span class="tag ai">AI-generated</span></h2>
       <div id="coach" class="panel coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
+      <h2>Decision review <span class="tag ai">AI-generated</span></h2>
+      <div id="decision" class="panel coach" aria-live="polite"><p class="when">Choose “Review decision” under a decrease in the highlights to review the moment before it.</p></div>
     </div>
   </div>
   <script src="/static/map_view.js"></script>
   <script src="/static/tactical.js"></script>
   <script src="/static/coach.js"></script>
+  <script src="/static/decision.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

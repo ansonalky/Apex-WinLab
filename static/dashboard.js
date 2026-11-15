@@ -104,7 +104,8 @@ async function loadMatch(gameId) {
   inFlight = null;
   pendingSeek = null;
   highlightToken += 1;
-  if (window.Coach) window.Coach.reset();
+  if (window.Coach) safely(() => window.Coach.reset());
+  if (window.DecisionReview) safely(() => window.DecisionReview.reset());
   heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
   finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
   timeInput.disabled = true;
@@ -206,7 +207,8 @@ async function loadFrame(elapsed) {
     draw();
     renderRoster();
     renderPredictions();
-    if (window.Coach) window.Coach.update();
+    if (window.Coach) safely(() => window.Coach.update());
+    if (window.DecisionReview) safely(() => window.DecisionReview.update());
   }
   if (pendingSeek !== null) {
     const latest = pendingSeek;
@@ -255,9 +257,21 @@ function colorFor(teamId) {
   return squad ? squad.color : "#888";
 }
 
+// AI panels are optional: a failure there must never stop the replay.
+function safely(fn, fallback) {
+  try {
+    return fn();
+  } catch (error) {
+    console.error(error);
+    return fallback;
+  }
+}
+
 function draw() {
   if (!frame) return;
+  const markers = window.DecisionReview ? safely(() => window.DecisionReview.markers(summary.game_id), []) : [];
   window.ApexMap.draw({
+    markers,
     canvas,
     ctx,
     frame,
@@ -491,6 +505,11 @@ function highlightCard(item) {
   ${clickable ? "</button>" : "</div>"}`;
 }
 
+// A downward card gets a "Review decision" button beside it (not inside it).
+function reviewRow(index) {
+  return `<div class="review-row"><button type="button" class="action quiet" data-review="${index}">Review decision</button></div>`;
+}
+
 function renderHighlights(box, result) {
   try {
     if (!result.ok || !result.body) {
@@ -513,11 +532,14 @@ function renderHighlights(box, result) {
       box.innerHTML = `<p><strong>${label}</strong></p><p>No move of 5 percentage points or more for this squad. A window is kept only when every replay second in it has a prediction. The recorded result is not included.</p>`;
       return;
     }
-    const section = (title, items) => items.length ? `<h3>${title}</h3>${items.map(highlightCard).join("")}` : "";
+    const section = (title, items, review) => items.length
+      ? `<h3>${title}</h3>${items.map((item, i) => highlightCard(item) + (review ? reviewRow(i) : "")).join("")}`
+      : "";
+    box.downItems = down;
     box.innerHTML = `<p><strong>${label}</strong></p>
       <p class="when">Click a row to move the slider to the start of that representative window. The change is in the model estimate. Listed events are coincident with the representative window, not a cause, and not the rest of the episode. The recorded result is not included.</p>
       ${section("Increases", up)}
-      ${section("Decreases", down)}`;
+      ${section("Decreases", down, Boolean(window.DecisionReview))}`;
   } catch (error) {
     box.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
     console.error(error);
@@ -566,6 +588,12 @@ function seekHighlight(elapsed) {
 
 for (const box of [heldoutHighlights, finalHighlights]) {
   box.addEventListener("click", (event) => {
+    const review = event.target.closest("button[data-review]");
+    if (review && box.contains(review)) {
+      const item = (box.downItems || [])[Number(review.dataset.review)];
+      if (item && window.DecisionReview) safely(() => window.DecisionReview.open(item));
+      return;
+    }
     const button = event.target.closest("button.highlight");
     if (!button || !box.contains(button) || button.dataset.elapsed === "") return;
     seekHighlight(button.dataset.elapsed);
@@ -581,22 +609,23 @@ squadSelect.addEventListener("change", () => {
   renderRoster();
   renderPredictions();
   loadTactical();
-  if (window.Coach) window.Coach.update();
+  if (window.Coach) safely(() => window.Coach.update());
+  if (window.DecisionReview) safely(() => window.DecisionReview.update());
 });
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
 // The AI review asks for the moment on screen when clicked, and seeks through
 // the same path as the highlights.
-if (window.Coach) {
-  window.Coach.init({
-    context: () => (summary && frame ? {
-      game: summary.game_id,
-      t: frame.t,
-      elapsed: frame.elapsed,
-      team: selectedTeam(),
-      squadName: squadSelect.selectedOptions[0] ? squadSelect.selectedOptions[0].textContent : selectedTeam(),
-    } : null),
-    seek: seekHighlight,
-  });
+function currentMoment() {
+  return summary && frame ? {
+    game: summary.game_id,
+    t: frame.t,
+    elapsed: frame.elapsed,
+    start: replayStart(),
+    team: selectedTeam(),
+    squadName: squadSelect.selectedOptions[0] ? squadSelect.selectedOptions[0].textContent : selectedTeam(),
+  } : null;
 }
+if (window.Coach) safely(() => window.Coach.init({ context: currentMoment, seek: seekHighlight }));
+if (window.DecisionReview) safely(() => window.DecisionReview.init({ context: currentMoment, seek: seekHighlight, redraw: () => { if (frame) draw(); } }));
 loadBackend();
 loadMatches();

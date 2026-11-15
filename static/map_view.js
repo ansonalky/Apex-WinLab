@@ -61,6 +61,24 @@ window.ApexMap = {
       ctx.arc(cx, cy, rr, 0, Math.PI * 2);
       ctx.stroke();
     }
+    // Reference points with known coordinates (decision review). A point only:
+    // no route is drawn, because no route is known.
+    for (const marker of view.markers || []) {
+      if (!Number.isFinite(marker.x) || !Number.isFinite(marker.y)) continue;
+      const [mx, my] = project(marker.x, marker.y);
+      ctx.save();
+      ctx.strokeStyle = marker.strong ? "#d4b8f0" : "#9b8bb0";
+      ctx.lineWidth = marker.strong ? 2.5 : 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(mx, my, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#d4b8f0";
+      ctx.font = "12px sans-serif";
+      ctx.fillText(marker.label, mx + 14, my + 22);
+      ctx.restore();
+    }
     const hud = document.querySelector("#ring-status");
     if (hud) hud.textContent = `Map and ring at slider ${formatClock(frame.elapsed)} · ${ringText(ring)}`;
   },

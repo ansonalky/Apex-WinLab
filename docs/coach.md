@@ -4,6 +4,8 @@ The **Analyze this situation** button next to **Tactical situation** asks an LLM
 
 Code: `coach.py` (packet, checks, provider, cache), `static/coach.js` (panel), routes in `app.py`. Tests: `tests/test_coach.py`.
 
+Downward highlights also have a **Review decision** flow built on the same packet, provider and cache: see [decision-review.md](decision-review.md).
+
 ## Configuration
 
 | Setting | Where | Default |

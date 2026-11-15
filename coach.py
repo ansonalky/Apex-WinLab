@@ -39,7 +39,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from live_predictions import FINAL, HELD_OUT
 from tactical import LIMITS as TACTICAL_LIMITS
@@ -549,6 +549,42 @@ def _texts(analysis: dict) -> list[str]:
     return texts
 
 
+def _clocks_in(value: Any, out: set) -> None:
+    if isinstance(value, dict):
+        for inner in value.values():
+            _clocks_in(inner, out)
+    elif isinstance(value, list):
+        for inner in value:
+            _clocks_in(inner, out)
+    elif isinstance(value, str) and re.fullmatch(r"\d{2,3}:\d{2}", value):
+        out.add(value)
+
+
+def check_texts(texts: list[str], packet: dict, ids: set, problems: list[str]) -> None:
+    """Append a problem for each number, time or claim in ``texts`` the packet does not support.
+
+    Numbers must equal a packet value within rounding (probabilities may be
+    written as percentages); ``mm:ss`` times must be times in the packet.
+    """
+    allowed: set = set()
+    _numbers_in(packet, allowed)
+    clocks: set = set()
+    _clocks_in(packet, clocks)
+    id_pattern = re.compile("|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True)))
+    for text in texts:
+        for match in _CLOCK.finditer(text):
+            if f"{int(match.group(1)):02d}:{match.group(2)}" not in clocks:
+                problems.append(f"time {match.group()} is not a time in the evidence")
+        stripped = _CLOCK.sub(" ", id_pattern.sub(" ", text))
+        for match in _NUMBER.finditer(stripped):
+            n = abs(float(match.group().replace(",", "").replace("−", "-")))
+            if not any(abs(n - v) <= max(0.51, 0.03 * abs(v)) for v in allowed):
+                problems.append(f"number {match.group()!r} is not in the evidence: \"{text[:120]}\"")
+        for pattern, why in _CLAIMS:
+            if pattern.search(text):
+                problems.append(f"{why}: \"{text[:120]}\"")
+
+
 def validate_analysis(analysis: Any, packet: dict) -> list[str]:
     """Reasons to reject a model response. Empty means it may be shown."""
     if not isinstance(analysis, dict):
@@ -587,23 +623,7 @@ def validate_analysis(analysis: Any, packet: dict) -> list[str]:
         if rec.get("type") == "conditional_recommendation" and not (rec.get("condition") or "").strip():
             problems.append(f"recommendation {i} is not conditional")
 
-    allowed: set = set()
-    _numbers_in(packet, allowed)
-    clocks = {item["clock"] for item in packet["items"]} | {packet["clock"], packet["window"]["start_clock"]}
-    clocks |= {item["window"]["start_clock"] for item in packet["items"] if item["window"]}
-    id_pattern = re.compile("|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True)))
-    for text in _texts(analysis):
-        for match in _CLOCK.finditer(text):
-            if f"{int(match.group(1)):02d}:{match.group(2)}" not in clocks:
-                problems.append(f"time {match.group()} is not a time in the evidence")
-        stripped = _CLOCK.sub(" ", id_pattern.sub(" ", text))
-        for match in _NUMBER.finditer(stripped):
-            n = abs(float(match.group().replace(",", "").replace("−", "-")))
-            if not any(abs(n - v) <= max(0.51, 0.03 * abs(v)) for v in allowed):
-                problems.append(f"number {match.group()!r} is not in the evidence: \"{text[:120]}\"")
-        for pattern, why in _CLAIMS:
-            if pattern.search(text):
-                problems.append(f"{why}: \"{text[:120]}\"")
+    check_texts(_texts(analysis), packet, ids, problems)
     return problems
 
 
@@ -678,18 +698,33 @@ def user_message(packet: dict) -> str:
     )
 
 
-def call_anthropic(config: dict, packet: dict) -> tuple[dict, dict]:
+class ReviewSpec(NamedTuple):
+    """One kind of review: its prompt, output schema and checks."""
+    prompt_version: str
+    system: str
+    user_message: Callable[[dict], str]
+    schema: Callable[[dict], dict]
+    validate: Callable[[Any, dict], list[str]]
+    verify: Callable[[dict], list[str]]
+    label: str
+
+
+SITUATION = ReviewSpec(PROMPT_VERSION, SYSTEM_PROMPT, user_message, output_schema, validate_analysis, verify_packet, AI_LABEL)
+
+
+def call_anthropic(config: dict, request: dict) -> tuple[dict, dict]:
+    """One Messages API call. ``request`` holds ``system``, ``user`` and ``schema``."""
     import anthropic
 
     client = anthropic.Anthropic(timeout=config["timeout_s"], max_retries=1)
-    output_config: dict = {"format": {"type": "json_schema", "schema": output_schema(packet)}}
+    output_config: dict = {"format": {"type": "json_schema", "schema": request["schema"]}}
     if config["effort"]:
         output_config["effort"] = config["effort"]
     kwargs = {
         "model": config["model"],
         "max_tokens": config["max_tokens"],
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_message(packet)}],
+        "system": request["system"],
+        "messages": [{"role": "user", "content": request["user"]}],
         "output_config": output_config,
     }
     try:
@@ -750,8 +785,8 @@ class Coach:
     def status(self) -> dict:
         return provider_status(load_config(self.env), self.env)
 
-    def cache_key(self, packet: dict, config: dict) -> str:
-        parts = [packet_hash(packet), str(config["provider"]), str(config["model"]), str(config["effort"]), PROMPT_VERSION]
+    def cache_key(self, packet: dict, config: dict, prompt_version: str = PROMPT_VERSION) -> str:
+        parts = [packet_hash(packet), str(config["provider"]), str(config["model"]), str(config["effort"]), prompt_version]
         return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     def _cached(self, key: str) -> dict | None:
@@ -775,34 +810,35 @@ class Coach:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             (self.cache_dir / f"{key}.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
-    def analyze(self, packet: dict) -> dict:
+    def analyze(self, packet: dict, spec: ReviewSpec = SITUATION) -> dict:
         config = load_config(self.env)
         status = provider_status(config, self.env)
         base = {"provider": config["provider"], "model": config["model"], "effort": config["effort"],
-                "prompt_version": PROMPT_VERSION, "packet_hash": packet_hash(packet),
+                "prompt_version": spec.prompt_version, "packet_hash": packet_hash(packet),
                 "t": packet["t"], "clock": packet["clock"], "window": packet["window"], "team": packet["team"],
                 "squad_name": packet["squad_name"], "game_id": packet["game_id"]}
         if not status["configured"]:
             return base | {"status": "not_configured", "setup": status}
-        problems = verify_packet(packet)
+        problems = spec.verify(packet)
         if problems:
             return base | {"status": "error", "kind": "packet", "error": "; ".join(problems), "retryable": False}
-        key = self.cache_key(packet, config)
+        key = self.cache_key(packet, config, spec.prompt_version)
         cached = self._cached(key)
         if cached is not None:
             return cached | {"cached": True}
         started = time.perf_counter()
         try:
-            analysis, meta = self.call(config, packet)
+            request = {"system": spec.system, "user": spec.user_message(packet), "schema": spec.schema(packet)}
+            analysis, meta = self.call(config, request)
         except CoachError as exc:
             return base | {"status": "error", "kind": exc.kind, "error": exc.message, "retryable": exc.retryable}
-        problems = validate_analysis(analysis, packet)
+        problems = spec.validate(analysis, packet)
         if problems:
             return base | {"status": "rejected", "retryable": True, "problems": problems, "provider_meta": meta,
                            "error": "The response failed the grounding checks and is not shown."}
         result = base | {
             "status": "ok",
-            "label": AI_LABEL,
+            "label": spec.label,
             "analysis": analysis,
             "provider_meta": meta,
             "latency_s": round(time.perf_counter() - started, 1),

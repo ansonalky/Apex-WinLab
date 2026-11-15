@@ -212,5 +212,5 @@ window.Coach = (() => {
     if (box) loadStatus();
   }
 
-  return { init, update, reset };
+  return { init, update, reset, helpers: { esc, clock, chips, itemsById } };
 })();

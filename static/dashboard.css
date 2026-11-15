@@ -107,3 +107,14 @@ button.evidence { font: inherit; font-size: 0.72rem; color: #a0cbe8; background:
 button.evidence:hover, button.evidence:focus-visible { border-color: #a0cbe8; }
 .coach pre { white-space: pre-wrap; word-break: break-word; font-size: 0.75rem; color: #b7beca; max-height: 14rem; overflow-y: auto; }
 .coach .packet-item { margin: 0.25rem 0; }
+.decision-pin { margin: 0.5rem 0 0; padding: 0.3rem 0.6rem; border-left: 3px solid #d4b8f0; background: #231b2e; font-size: 0.85rem; max-width: 70rem; }
+.review-row { margin: 0.25rem 0 0.4rem; text-align: right; }
+.coach dl.episode { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.6rem; margin: 0.4rem 0; font-size: 0.88rem; }
+.coach dl.episode dt { color: #8e97a6; }
+.coach dl.episode dd { margin: 0; }
+.decision-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; margin-top: 0.5rem; }
+.decision-controls input { width: 5rem; background: #121418; color: #e7e9ee; border: 1px solid #2c3340; border-radius: 6px; padding: 0.3rem; font: inherit; }
+.coach .retro-block { border-left: 3px dashed #8e97a6; padding-left: 0.5rem; }
+button.evidence.retro { color: #c9c2d6; background: #24212b; border-style: dashed; }
+.coach .factor.option.chosen { border-color: #d4b8f0; }
+.coach details.retro > summary { color: #b7beca; }
