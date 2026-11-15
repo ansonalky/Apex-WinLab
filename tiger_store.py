@@ -18,7 +18,9 @@ from typing import Any
 
 from dashboard_data import (
     COORDINATE_NOTE,
+    EXPANSION_REASON,
     HELDOUT_PREDICTION_TYPE,
+    ORIGINAL,
     PALETTE,
     _unavailable,
     checkpoint_at,
@@ -152,9 +154,20 @@ class TigerStore:
 
     # --- views -----------------------------------------------------------------
 
+    def _expansion_view(self, game_id: int) -> dict | None:
+        match = self.reader.match(game_id) or {}
+        collection = match.get("collection")
+        if collection not in (None, "", ORIGINAL):
+            return _unavailable(EXPANSION_REASON, collection=collection, split=None)
+        return None
+
     def heldout(self, game_id: int) -> dict:
         key = ("heldout", game_id)
         if key not in self._views:
+            blocked = self._expansion_view(game_id)
+            if blocked is not None:
+                self._views[key] = blocked
+                return self._views[key]
             match = self.reader.match(game_id) or {}
             points, version = self._points(game_id, "held_out")
             if not points:
@@ -194,6 +207,10 @@ class TigerStore:
     def curve(self, game_id: int) -> dict:
         key = ("final", game_id)
         if key not in self._views:
+            blocked = self._expansion_view(game_id)
+            if blocked is not None:
+                self._views[key] = blocked
+                return self._views[key]
             points, version = self._points(game_id, "final_model_fitted")
             if not points:
                 self._views[key] = _unavailable("The database holds no final_model_fitted rows for this game.",

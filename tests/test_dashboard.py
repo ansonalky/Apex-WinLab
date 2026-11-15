@@ -9,7 +9,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import create_app
-from dashboard_data import MatchStore, build_timeline, evaluation_panel, prediction_curve
+from dashboard_data import (
+    EXPANSION_REASON,
+    MatchStore,
+    build_timeline,
+    clear_expansion_dirs,
+    evaluation_panel,
+    prediction_curve,
+    register_expansion_dir,
+    sort_matches,
+)
 
 
 def _series():
@@ -538,6 +547,115 @@ class HighlightApiTest(unittest.TestCase):
         self.assertIn(b'id="moment-up"', page)
         self.assertIn(b'id="moment-down"', page)
         self.assertIn(b'id="alt-highlights"', page)
+
+
+class MatchOrderTest(unittest.TestCase):
+    def test_numeric_quality_desc_missing_last_game_id_desc(self):
+        rows = [
+            {"game_id": 1, "quality_score": 8},
+            {"game_id": 3, "quality_score": None},
+            {"game_id": 2, "quality_score": 9},
+            {"game_id": 4, "quality_score": 9},
+            {"game_id": 5, "quality_score": False},
+        ]
+        self.assertEqual([row["game_id"] for row in sort_matches(rows)], [4, 2, 1, 5, 3])
+
+    def test_match_api_uses_that_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / "collection").mkdir()
+            games = {}
+            for game_id, quality in ((1, 1), (2, None), (3, 1), (4, 5)):
+                games[str(game_id)] = {
+                    "acceptance_status": "accepted",
+                    "game_id": game_id,
+                    "quality_score": quality,
+                    "match_start": 1,
+                }
+            (data / "collection" / "manifest.json").write_text(json.dumps({"games": games}), encoding="utf-8")
+            matches = create_app(data).test_client().get("/api/matches").get_json()
+        self.assertEqual([row["game_id"] for row in matches], [4, 3, 1, 2])
+
+
+class ExpansionCollectionTest(unittest.TestCase):
+    def tearDown(self):
+        clear_expansion_dirs()
+
+    def _record(self, game_id: int, quality):
+        return {
+            "acceptance_status": "accepted",
+            "reason": "accepted",
+            "game_id": game_id,
+            "session_id": 1,
+            "event": "Expansion",
+            "map_name": "mp_rr_district_mu1",
+            "quality_score": quality,
+            "match_start": 10,
+            "livedata_id": "demo",
+            "validation": {"winner": {"teamId": 1, "teamName": "Red", "label_source": "test"}},
+        }
+
+    def test_expansion_package_has_no_frozen_split_or_prediction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / "collection").mkdir()
+            (data / "raw").mkdir()
+            (data / "models").mkdir()
+            (data / "models" / "model.json").write_text("{", encoding="utf-8")
+            (data / "raw" / "demo.timeseries.json").write_text(json.dumps({"series": _series()}), encoding="utf-8")
+            games = {
+                "7": self._record(7, 3),
+                "8": self._record(8, None),
+                "9": self._record(9, 3),
+            }
+            (data / "collection" / "manifest.json").write_text(
+                json.dumps({"package": "accepted-expansion-49", "games": games}),
+                encoding="utf-8",
+            )
+            store = MatchStore(data)
+            store.bundle = {"available": True, "split_of": {7: "test", 8: "train", 9: "validation"}}
+            rows = store.matches()
+            self.assertEqual([row["game_id"] for row in rows], [9, 7, 8])
+            self.assertTrue(all(row["split"] is None and row["heldout"] is False for row in rows))
+            self.assertEqual(rows[0]["collection"], "accepted-expansion-49")
+            curve = store.curve(7)
+            heldout = store.heldout(7)
+            from live_predictions import FINAL
+            from turning_points import highlights_for_game
+
+            moments = highlights_for_game(data, 7, FINAL, 1)
+        self.assertFalse(moments["available"])
+        self.assertEqual(moments["missing"], [EXPANSION_REASON])
+        self.assertFalse(curve["available"])
+        self.assertIn("original 51", curve["reason"])
+        self.assertEqual(curve["reason"], EXPANSION_REASON)
+        self.assertFalse(heldout["available"])
+        self.assertEqual(heldout["reason"], EXPANSION_REASON)
+
+    def test_registered_expansion_games_are_not_given_the_frozen_split(self):
+        with tempfile.TemporaryDirectory() as original, tempfile.TemporaryDirectory() as extra:
+            original, extra = Path(original), Path(extra)
+            (original / "collection").mkdir()
+            (extra / "collection").mkdir()
+            (original / "collection" / "manifest.json").write_text(
+                json.dumps({"games": {"1": self._record(1, 1)}}),
+                encoding="utf-8",
+            )
+            (extra / "collection" / "manifest.json").write_text(
+                json.dumps({"package": "accepted-expansion-49", "games": {"99": self._record(99, 20)}}),
+                encoding="utf-8",
+            )
+            register_expansion_dir(extra)
+            store = MatchStore(original)
+            store.bundle = {"available": True, "split_of": {1: "test", 99: "test"}}
+            ordered = store.matches()
+            rows = {row["game_id"]: row for row in ordered}
+            self.assertEqual([row["game_id"] for row in ordered], [99, 1])
+            self.assertEqual(rows[1]["split"], "test")
+            self.assertTrue(rows[1]["heldout"])
+            self.assertIsNone(rows[99]["split"])
+            self.assertFalse(rows[99]["heldout"])
+            self.assertEqual(rows[99]["collection"], "accepted-expansion-49")
 
 
 if __name__ == "__main__":

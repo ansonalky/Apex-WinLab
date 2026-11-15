@@ -30,7 +30,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from dashboard_data import HELDOUT_BUNDLE, _model_file, _raw_path, _record, load_heldout_bundle
+from dashboard_data import HELDOUT_BUNDLE, _model_file, _raw_path, _record, frozen_model_applies, load_heldout_bundle
 from features import contention, elimination_team, replay_checkpoints, squad_rows
 from train_model import contention_baseline, masked, predict
 
@@ -109,6 +109,10 @@ class LivePredictions:
 
     def available(self, game_id: Any, kind: str) -> bool:
         if kind == HELD_OUT and game_id not in self.test_games:
+            return False
+        # Expansion games: the frozen models were never fitted or evaluated on them.
+        record = _record(self.data_dir, game_id)
+        if record is not None and not frozen_model_applies(self.data_dir, record):
             return False
         return self.model(kind) is not None
 

@@ -41,7 +41,7 @@ from tiger_rows import (
     squad_tuples,
 )
 
-from dashboard_data import HELDOUT_BUNDLE
+from dashboard_data import HELDOUT_BUNDLE, ORIGINAL, collection_name
 
 SCHEMA = Path(__file__).with_name("tiger_schema.sql")
 
@@ -49,8 +49,8 @@ INSERT_MATCH = """
 INSERT INTO matches (
   game_id, session_id, event, map_name, quality_score, organizer_username,
   match_start, replay_match_start, playing_start_s, evaluation_split,
-  winner_team_id, winner_team_name, winner_label_source, conclusion_t
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  winner_team_id, winner_team_name, winner_label_source, conclusion_t, collection
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (game_id) DO UPDATE SET
   session_id = EXCLUDED.session_id,
   event = EXCLUDED.event,
@@ -64,7 +64,8 @@ ON CONFLICT (game_id) DO UPDATE SET
   winner_team_id = EXCLUDED.winner_team_id,
   winner_team_name = EXCLUDED.winner_team_name,
   winner_label_source = EXCLUDED.winner_label_source,
-  conclusion_t = EXCLUDED.conclusion_t
+  conclusion_t = EXCLUDED.conclusion_t,
+  collection = EXCLUDED.collection
 """
 
 INSERT_SQUAD = "INSERT INTO squads (game_id, team_id, team_name) VALUES (%s, %s, %s)"
@@ -144,7 +145,11 @@ class Source:
         self.record = load_record(data_dir, game_id)
         self.timeline = load_timeline(data_dir, game_id, self.store)
         split_of = self.store.bundle.get("split_of") or {} if self.store.bundle.get("available") else {}
-        self.match = match_tuple(self.record, self.timeline, split_of.get(game_id))
+        # Expansion manifests name their package; the frozen dataset is "original".
+        # An expansion game is not assigned a frozen split.
+        self.collection = collection_name(data_dir)
+        split = None if self.collection != ORIGINAL else split_of.get(game_id)
+        self.match = match_tuple(self.record, self.timeline, split, self.collection)
         self.players = player_tuples(self.record, self.timeline)
         self.squads = squad_tuples(game_id, self.timeline)
         self.estimates = estimate_rows(data_dir, game_id, self.timeline, self.store)
@@ -269,6 +274,17 @@ def verify_game(connection, source: Source, sample_seconds: int = 5) -> dict:
     }
 
 
+def evaluation_for_import(data_dir: Path, frames_only: bool = False) -> tuple | None:
+    """The frozen evaluation report, or None when this import must not touch it.
+
+    Expansion collections do not upsert ``evaluation_reports``. ``--frames-only``
+    does not either.
+    """
+    if frames_only or collection_name(data_dir) != ORIGINAL:
+        return None
+    return evaluation_tuple(data_dir)
+
+
 def dry_run(source: Source) -> dict:
     frames = source.timeline["frames"]
     t = frames[min(30, len(frames) - 1)]["t"]
@@ -318,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         return 0
 
-    report_row = None if args.frames_only else evaluation_tuple(args.data_dir)
+    report_row = evaluation_for_import(args.data_dir, args.frames_only)
     connection = connect()
     failures = 0
     try:

@@ -81,7 +81,7 @@ The page header and `/api/backend` always show the active backend and the reason
 
 ## Final results
 
-`team_results` and `player_results` hold one final line per team and per player per game. `import_results.py` replaces only those two tables. It does not delete replay frames or predictions. The performance page queries them directly. See `docs/performance-stats.md`.
+`team_results` and `player_results` hold one final line per team and per player per game. `import_results.py` replaces those rows only for the accepted games in the directory it was given. An empty selection deletes nothing. It does not delete other games' results, replay frames, predictions, or the evaluation report. The performance page queries the result tables directly. See `docs/performance-stats.md`.
 
 ```sh
 .venv/bin/python import_results.py --data-dir data --dry-run

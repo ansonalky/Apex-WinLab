@@ -64,6 +64,11 @@ def _accepted(data_dir: Path) -> list[dict]:
     return [row for row in manifest["games"].values() if row.get("reason") == "accepted"]
 
 
+def selected_game_ids(data_dir: Path) -> list[int]:
+    """Accepted game ids in ``data_dir``, in manifest order. This is the import selection."""
+    return [int(row["game_id"]) for row in _accepted(data_dir)]
+
+
 def _stats(data_dir: Path, session_id: int, cache: dict) -> dict:
     if session_id not in cache:
         path = data_dir / "collection" / "cache" / f"stats-{session_id}.json"

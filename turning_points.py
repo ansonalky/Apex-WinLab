@@ -323,6 +323,11 @@ def detect_turning_points(
 
 
 def _missing(live: LivePredictions, game_id: Any, kind: str) -> list[str]:
+    from dashboard_data import EXPANSION_REASON, _record, frozen_model_applies
+
+    record = _record(live.data_dir, game_id)
+    if record is not None and not frozen_model_applies(live.data_dir, record):
+        return [EXPANSION_REASON]
     if kind == HELD_OUT:
         if not live.bundle.get("available"):
             reason = live.bundle.get("reason") or "held-out bundle is not available"

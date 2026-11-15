@@ -69,9 +69,37 @@ def _leaf(row: dict, *path: str) -> Any:
     return value
 
 
-def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
-    """Accepted games only, oldest ``match_start`` first.
+def _numeric_quality(value: Any) -> float | None:
+    """A real quality score. Booleans, strings, and missing values are not scores."""
+    if isinstance(value, bool) or isinstance(value, str) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
 
+
+def sort_matches(rows: list[dict]) -> list[dict]:
+    """Numeric quality descending, missing scores last, game id descending on ties."""
+
+    def key(item: dict) -> tuple:
+        score = _numeric_quality(item.get("quality_score"))
+        try:
+            game_key = -int(item.get("game_id"))
+        except (TypeError, ValueError):
+            game_key = 0
+        return (score is None, -(score if score is not None else 0.0), game_key)
+
+    return sorted(rows, key=key)
+
+
+def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
+    """Accepted games, highest numeric quality first.
+
+    Missing quality scores sort last. Ties break by game id descending.
     ``split_of`` maps game id to its frozen split (train, validation, test);
     ``heldout`` is true only for test games with a valid bundle.
     """
@@ -79,6 +107,7 @@ def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
     manifest = data_dir / "collection" / "manifest.json"
     if not manifest.is_file():
         return []
+    collection = collection_name(data_dir)
     document = json.loads(manifest.read_text(encoding="utf-8"))
     rows = []
     for record in (document.get("games") or {}).values():
@@ -100,25 +129,114 @@ def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
                     "label_source": winner.get("label_source"),
                 },
                 "split": split_of.get(record.get("game_id")),
+                "collection": collection,
                 "heldout": split_of.get(record.get("game_id")) == "test",
             }
         )
-    rows.sort(key=lambda item: ((item["match_start"] is None), item["match_start"] or 0, str(item["game_id"])))
-    return rows
+    return sort_matches(rows)
+
+
+# ---------------------------------------------------------------- expansion collections
+# Accepted games outside the frozen 51-game dataset, each collection in its own
+# directory with its own manifest (for example ~/Apex-WinLab-expansion/data).
+# They are read-only here: never part of the frozen splits, the held-out bundle
+# or any model fit, and no prediction is shown for them.
+ORIGINAL = "original"
+EXPANSION_REASON = (
+    "Expansion game: no win estimate is shown. The frozen models were fitted and evaluated on the "
+    "original 51 games only; this game is not in the frozen held-out split and has not been evaluated."
+)
+_EXPANSION_DIRS: list[Path] = []
+
+
+def register_expansion_dir(path: Path) -> None:
+    path = Path(path).expanduser().resolve()
+    if not (path / "collection" / "manifest.json").is_file():
+        raise SystemExit(f"--expansion-dir has no collection/manifest.json: {path}")
+    if path not in _EXPANSION_DIRS:
+        _EXPANSION_DIRS.append(path)
+
+
+def clear_expansion_dirs() -> None:
+    _EXPANSION_DIRS.clear()
+
+
+def expansion_dirs() -> list[Path]:
+    return list(_EXPANSION_DIRS)
+
+
+def collection_name(data_dir: Path) -> str:
+    """The manifest's ``package`` name; the production manifest has none and is ``original``."""
+    document = _manifest(Path(data_dir) / "collection" / "manifest.json")
+    if not isinstance(document, dict):
+        return ORIGINAL
+    return document.get("package") or ORIGINAL
+
+
+def is_expansion(record: dict | None) -> bool:
+    return bool(record and record.get("_collection"))
+
+
+def frozen_model_applies(data_dir: Path, record: dict | None) -> bool:
+    """Frozen splits and models apply only to the original dataset.
+
+    A registered expansion record, or any game read from a manifest that names
+    a package, is outside that dataset.
+    """
+    if is_expansion(record):
+        return False
+    directory = Path(record["_data_dir"]) if record and record.get("_data_dir") else Path(data_dir)
+    return collection_name(directory) == ORIGINAL
 
 
 def _record(data_dir: Path, game_id: int) -> dict | None:
-    manifest = data_dir / "collection" / "manifest.json"
-    if not manifest.is_file():
+    """The accepted record from ``data_dir``, else from a registered expansion
+    directory, tagged with ``_data_dir`` and ``_collection``."""
+    found = _record_in(data_dir, game_id)
+    if found is not None:
+        return found
+    for extra in _EXPANSION_DIRS:
+        if extra == Path(data_dir).resolve():
+            continue
+        found = _record_in(extra, game_id)
+        if found is not None:
+            return found | {"_data_dir": str(extra), "_collection": collection_name(extra)}
+    return None
+
+
+_MANIFESTS: dict[Path, tuple[int, dict]] = {}
+
+
+def _manifest(path: Path) -> dict | None:
+    """Parsed manifest, reused until the file changes (per-second requests look records up)."""
+    try:
+        stamp = path.stat().st_mtime_ns
+    except OSError:
         return None
-    document = json.loads(manifest.read_text(encoding="utf-8"))
+    cached = _MANIFESTS.get(path)
+    if cached is None or cached[0] != stamp:
+        cached = (stamp, json.loads(path.read_text(encoding="utf-8")))
+        _MANIFESTS[path] = cached
+    return cached[1]
+
+
+def _record_in(data_dir: Path, game_id: int) -> dict | None:
+    document = _manifest(data_dir / "collection" / "manifest.json")
+    if document is None:
+        return None
     for record in (document.get("games") or {}).values():
         if isinstance(record, dict) and record.get("game_id") == game_id and record.get("acceptance_status") == "accepted":
-            return record
+            return dict(record)
     return None
 
 
 def _raw_path(record: dict, data_dir: Path) -> Path | None:
+    if record.get("_data_dir"):
+        # An expansion record: only its own directory, never production data/raw.
+        data_dir = Path(record["_data_dir"])
+        name = Path(record.get("download_path") or f"{record.get('livedata_id')}.timeseries.json").name
+        candidate = data_dir / "raw" / name
+        return candidate if candidate.is_file() else None
     if record.get("download_path"):
         candidate = Path(record["download_path"])
         if not candidate.is_absolute():
@@ -576,10 +694,24 @@ class MatchStore:
         self.bundle = load_heldout_bundle(data_dir, bundle_name)
 
     def _cache_path(self, game_id: Any) -> Path:
-        return self.data_dir / "dashboard" / f"{game_id}.json"
+        # An expansion game's timeline cache stays in its own directory.
+        record = _record(self.data_dir, game_id)
+        root = Path(record["_data_dir"]) if record and record.get("_data_dir") else self.data_dir
+        return root / "dashboard" / f"{game_id}.json"
 
     def matches(self) -> list[dict]:
-        return list_matches(self.data_dir, self.bundle.get("split_of") if self.bundle.get("available") else None)
+        # A packaged expansion directory is not the frozen split, even if a bundle is present.
+        own_split = None
+        if collection_name(self.data_dir) == ORIGINAL and self.bundle.get("available"):
+            own_split = self.bundle.get("split_of")
+        rows = list_matches(self.data_dir, own_split)
+        known = {row["game_id"] for row in rows}
+        for extra in _EXPANSION_DIRS:
+            if extra == Path(self.data_dir).resolve():
+                continue
+            # Expansion games: never held-out and never in a frozen split.
+            rows += [row | {"heldout": False, "split": None} for row in list_matches(extra) if row["game_id"] not in known]
+        return sort_matches(rows)
 
     def timeline(self, game_id: int) -> dict | None:
         if game_id in self._memory:
@@ -620,8 +752,12 @@ class MatchStore:
             timeline = self.timeline(game_id)
             if timeline is None:
                 return _unavailable("Match not found.")
-            record = _record(self.data_dir, game_id) or {}
-            winner = ((record.get("validation") or {}).get("winner") or {}).get("teamId")
+            record = _record(self.data_dir, game_id)
+            if not frozen_model_applies(self.data_dir, record):
+                collection = (record or {}).get("_collection") or collection_name(self.data_dir)
+                self._curves[game_id] = _unavailable(EXPANSION_REASON, collection=collection)
+                return self._curves[game_id]
+            winner = (((record or {}).get("validation") or {}).get("winner") or {}).get("teamId")
             self._curves[game_id] = prediction_curve(
                 timeline["checkpoints"], self.data_dir, game_id, winner, timeline.get("replay_match_start")
             )
@@ -632,7 +768,12 @@ class MatchStore:
             timeline = self.timeline(game_id)
             if timeline is None:
                 return _unavailable("Match not found.")
-            self._views[game_id] = heldout_view(self.bundle, game_id, timeline)
+            record = _record(self.data_dir, game_id)
+            if not frozen_model_applies(self.data_dir, record):
+                collection = (record or {}).get("_collection") or collection_name(self.data_dir)
+                self._views[game_id] = _unavailable(EXPANSION_REASON, collection=collection)
+            else:
+                self._views[game_id] = heldout_view(self.bundle, game_id, timeline)
         return self._views[game_id]
 
     @staticmethod
@@ -654,6 +795,7 @@ class MatchStore:
             "map_name": record.get("map_name"),
             "quality_score": record.get("quality_score"),
             "organizer_username": record.get("organizer_username"),
+            "collection": record.get("_collection") or collection_name(self.data_dir),
             "winner": {
                 "teamId": winner.get("teamId"),
                 "teamName": winner.get("teamName"),

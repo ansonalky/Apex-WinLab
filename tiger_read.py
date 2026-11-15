@@ -20,6 +20,8 @@ import threading
 from contextlib import contextmanager
 from typing import Any
 
+from dashboard_data import sort_matches
+
 KINDS = ("held_out", "final_model_fitted")
 
 LIST_MATCHES = """
@@ -33,7 +35,7 @@ ORDER BY m.match_start NULLS LAST, m.game_id
 MATCH = """
 SELECT game_id, session_id, event, map_name, quality_score, organizer_username,
        match_start, replay_match_start, playing_start_s, evaluation_split,
-       winner_team_id, winner_team_name, winner_label_source, conclusion_t
+       winner_team_id, winner_team_name, winner_label_source, conclusion_t, collection
 FROM matches WHERE game_id = %s
 """
 
@@ -158,7 +160,7 @@ class TigerReader:
     def list_matches(self) -> list[dict]:
         with self._connection() as connection:
             rows = connection.execute(LIST_MATCHES).fetchall()
-        return [
+        return sort_matches([
             {
                 "game_id": row[0],
                 "session_id": row[1],
@@ -172,7 +174,7 @@ class TigerReader:
                 "heldout": bool(row[11]),
             }
             for row in rows
-        ]
+        ])
 
     def match(self, game_id: int) -> dict | None:
         with self._connection() as connection:
@@ -181,7 +183,7 @@ class TigerReader:
             return None
         keys = ("game_id", "session_id", "event", "map_name", "quality_score", "organizer_username",
                 "match_start", "replay_match_start", "playing_start_s", "evaluation_split",
-                "winner_team_id", "winner_team_name", "winner_label_source", "conclusion_t")
+                "winner_team_id", "winner_team_name", "winner_label_source", "conclusion_t", "collection")
         return dict(zip(keys, row))
 
     def list_squads(self, game_id: int) -> list[dict]:

@@ -106,8 +106,9 @@ ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS elimination_verified boolea
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS metrics_json text;
 
 -- Final per-game results for the performance page.
--- These tables are replaced by import_results.py. They are not derived from
--- player_frames, and importing them does not delete replay or prediction rows.
+-- import_results.py replaces rows only for the game ids selected for that
+-- import. An empty selection deletes nothing. Importing them does not delete
+-- replay frames, predictions, or the evaluation report.
 -- roster_key is the sorted Overstat player ids. team_id is match-local only.
 
 CREATE TABLE IF NOT EXISTS team_results (
@@ -145,3 +146,6 @@ CREATE TABLE IF NOT EXISTS player_results (
 
 CREATE INDEX IF NOT EXISTS player_results_player
   ON player_results (player_id, squad_format);
+-- Which accepted-game collection a match came from: 'original' (the frozen
+-- 51-game dataset) or an expansion package name. NULL means original.
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS collection text;

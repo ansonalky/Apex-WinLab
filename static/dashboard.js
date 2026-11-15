@@ -63,8 +63,25 @@ async function loadBackend() {
   }
 }
 
+function qualityValue(match) {
+  const score = match.quality_score;
+  return typeof score === "number" && Number.isFinite(score) ? score : null;
+}
+
+// Highest numeric quality first. Missing scores last. Ties break by game id descending.
+function compareMatches(a, b) {
+  const aq = qualityValue(a);
+  const bq = qualityValue(b);
+  if (aq === null || bq === null) {
+    if (aq === null && bq === null) return Number(b.game_id) - Number(a.game_id);
+    return aq === null ? 1 : -1;
+  }
+  if (aq !== bq) return bq - aq;
+  return Number(b.game_id) - Number(a.game_id);
+}
+
 async function loadMatches() {
-  const matches = await (await fetch("/api/matches")).json();
+  const matches = (await (await fetch("/api/matches")).json()).sort(compareMatches);
   matchSelect.innerHTML = "";
   for (const match of matches) {
     const option = document.createElement("option");
@@ -624,7 +641,7 @@ function renderCarousel(direction) {
   if (!result.ok || !result.body || result.body.available !== true) {
     const body = result.body || {};
     const reason = body.error || (body.missing || []).join("; ") || (result.status ? `HTTP ${result.status}` : "");
-    box.innerHTML = `${head(0, 0)}<p class="unavailable">Not available${reason ? `: ${esc(reason)}` : ""}.</p>`;
+    box.innerHTML = `${head(0, 0)}${unavailableLine(reason)}`;
     return;
   }
   const items = (Array.isArray(result.body[direction]) ? result.body[direction] : []).slice(0, 3);
@@ -662,6 +679,12 @@ function highlightCard(item) {
   </div>`;
 }
 
+function unavailableLine(reason) {
+  const text = reason ? `: ${esc(reason)}` : "";
+  const stop = reason && /[.!?]$/.test(reason) ? "" : ".";
+  return `<p class="unavailable">Not available${text}${stop}</p>`;
+}
+
 function renderHighlightList(box, result) {
   try {
     if (!result) {
@@ -671,7 +694,7 @@ function renderHighlightList(box, result) {
     if (!result.ok || !result.body || result.body.available !== true) {
       const body = result.body || {};
       const reason = body.error || (body.missing || []).join("; ") || (result.status ? `HTTP ${result.status}` : "");
-      box.innerHTML = `<p class="unavailable">Not available${reason ? `: ${esc(reason)}` : ""}.</p>`;
+      box.innerHTML = unavailableLine(reason);
       return;
     }
     const up = Array.isArray(result.body.up) ? result.body.up : [];

@@ -80,7 +80,7 @@ def _replay_start(timeline: dict, game_id: Any) -> Any:
     return start
 
 
-def match_tuple(record: dict, timeline: dict, split: str | None = None) -> tuple:
+def match_tuple(record: dict, timeline: dict, split: str | None = None, collection: str = "original") -> tuple:
     start = record.get("match_start")
     if not isinstance(start, (int, float)) or isinstance(start, bool):
         raise SystemExit(f"game {record.get('game_id')} has no numeric match_start")
@@ -101,6 +101,7 @@ def match_tuple(record: dict, timeline: dict, split: str | None = None) -> tuple
         winner.get("teamName"),
         winner.get("label_source"),
         timeline.get("conclusion_t"),
+        collection,
     )
 
 
@@ -235,7 +236,17 @@ def fitted_rows(data_dir: Path, game_id: int, timeline: dict, store=None) -> tup
 
 
 def estimate_rows(data_dir: Path, game_id: int, timeline: dict, store=None) -> dict[str, tuple[list[tuple], str]]:
-    """``{kind: (rows, status)}``. A kind with no rows is not replaced on import."""
+    """``{kind: (rows, status)}``. A kind with no rows is not replaced on import.
+
+    Expansion collections get no rows, so an import does not write frozen-model
+    predictions for them and does not delete predictions already stored for
+    other games.
+    """
+    from dashboard_data import ORIGINAL, collection_name
+
+    if collection_name(data_dir) != ORIGINAL:
+        status = "expansion collection: frozen models are not applied"
+        return {HELD_OUT: ([], status), FITTED: ([], status)}
     out = {
         HELD_OUT: held_out_rows(data_dir, game_id, timeline, store),
         FITTED: fitted_rows(data_dir, game_id, timeline, store),

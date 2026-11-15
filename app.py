@@ -10,6 +10,10 @@ through ``TigerReader`` and fails if the database cannot be used.
 ``--backend auto`` uses Tiger Data when ``DATABASE_URL`` connects and holds
 imported matches, else local files. The active backend, and why, is served at
 ``/api/backend`` and shown on the page.
+
+``--expansion-dir`` adds another accepted-game directory. Those games are not
+given a frozen split or a frozen-model prediction. Maps, rings, and coaching
+still read that directory's own replay files.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request
 
 from coach import Coach, build_packet
-from dashboard_data import MatchStore
+from dashboard_data import MatchStore, clear_expansion_dirs, register_expansion_dir
 from decision_review import DECISION, build_decision_packet
 from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
@@ -261,12 +265,22 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the Apex WinLab dashboard.")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory with collection/ and raw/.")
+    parser.add_argument(
+        "--expansion-dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Extra accepted-game directory. Not part of the frozen dataset.",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5050)
     parser.add_argument("--backend", choices=("auto", "files", "tiger"), default="auto")
     args = parser.parse_args(argv)
     if not args.data_dir.is_dir():
         raise SystemExit(f"--data-dir is not a directory: {args.data_dir}")
+    clear_expansion_dirs()
+    for path in args.expansion_dir:
+        register_expansion_dir(path)
     store, info = select_store(args.data_dir, args.backend)
     print(f"data backend: {info['label']} ({info['detail']})")
     app = create_app(args.data_dir, store=store, info=info)

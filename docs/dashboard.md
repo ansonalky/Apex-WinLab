@@ -103,7 +103,9 @@ Arrows change the displayed card only. They never seek, move the camera or call 
 
 So the Tiger-backed dashboard still needs the local data directory for the ring.
 
-Quality on the selector is the manifest's unrounded per-game score. It is not a model feature.
+Quality on the selector is the manifest's unrounded per-game score. It is not a model feature. The match dropdown lists numeric quality from highest to lowest, with missing scores last and the higher game id first when scores tie.
+
+`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and get no frozen-model prediction. Their maps, rings, and coaching still read that directory's replay files. The original manifest and models are not modified.
 
 ## Launch
 

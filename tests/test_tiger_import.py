@@ -7,12 +7,14 @@ the SQL itself is exercised against a real Postgres outside this suite.
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import import_tiger
-from tiger_rows import FITTED, HELD_OUT, frame_at, player_tuples, replay_timestamp
+from tiger_rows import FITTED, HELD_OUT, estimate_rows, frame_at, player_tuples, replay_timestamp
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 
@@ -178,6 +180,25 @@ class RealDataTest(unittest.TestCase):
             self.assertEqual(row[8], probabilities["model"])
             if row[12] and row[11]:
                 self.assertEqual(row[7], 0.0)
+
+
+class ExpansionImportTest(unittest.TestCase):
+    def test_expansion_directory_gets_no_estimates_and_does_not_read_the_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / "collection").mkdir()
+            (data / "models").mkdir()
+            (data / "models" / "model.json").write_text("{", encoding="utf-8")
+            (data / "collection" / "manifest.json").write_text(
+                json.dumps({"package": "accepted-expansion-49", "games": {}}),
+                encoding="utf-8",
+            )
+            rows = estimate_rows(data, 7, {"frames": []})
+            self.assertEqual(rows[HELD_OUT][0], [])
+            self.assertEqual(rows[FITTED][0], [])
+            with patch("import_tiger.evaluation_tuple", side_effect=AssertionError("report was read")):
+                self.assertIsNone(import_tiger.evaluation_for_import(data))
+                self.assertIsNone(import_tiger.evaluation_for_import(data, frames_only=True))
 
 
 if __name__ == "__main__":

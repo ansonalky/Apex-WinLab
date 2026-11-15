@@ -2,7 +2,9 @@
 """Import final team and player results into Tiger Data.
 
 Does not read or write player_frames, squads, squad_estimates, or
-evaluation_reports. Re-running replaces only team_results and player_results.
+evaluation_reports. Re-running replaces team_results and player_results
+only for the accepted games in ``--data-dir``. Other games' rows stay.
+An empty selection deletes nothing. Deletion and insertion are one transaction.
 
     .venv/bin/python import_results.py --data-dir data --dry-run
     set -a; . ./.env; set +a
@@ -16,7 +18,7 @@ import os
 from pathlib import Path
 
 from import_tiger import SCHEMA, connect, redact
-from result_rows import SCORING_COMPATIBLE, load_results
+from result_rows import SCORING_COMPATIBLE, load_results, selected_game_ids
 
 MARKER = "-- Final per-game results"
 
@@ -76,15 +78,39 @@ def apply_results_schema(connection) -> None:
     connection.commit()
 
 
-def replace_results(connection, teams: list[dict], players: list[dict]) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM player_results")
-        cursor.execute("DELETE FROM team_results")
-        if teams:
-            cursor.executemany(TEAM_INSERT, teams)
-        if players:
-            cursor.executemany(PLAYER_INSERT, players)
-    connection.commit()
+def replace_results(connection, teams: list[dict], players: list[dict], game_ids) -> None:
+    """Replace result rows for ``game_ids`` only.
+
+    The selection is the caller's list, not "every row in the table" and not
+    whatever happens to be in ``teams``. An empty selection performs no
+    DELETE and no INSERT. Rows for a game that was not selected are refused
+    before the transaction starts. The delete and the insert commit or roll
+    back together.
+    """
+    from psycopg.pq import TransactionStatus
+
+    selected: list[int] = []
+    seen: set[int] = set()
+    for game_id in game_ids:
+        game_id = int(game_id)
+        if game_id not in seen:
+            seen.add(game_id)
+            selected.append(game_id)
+    extra = sorted({int(row["game_id"]) for row in (*teams, *players)} - seen)
+    if extra:
+        raise ValueError(f"result rows include games that were not selected: {extra}")
+    if connection.info.transaction_status != TransactionStatus.IDLE:
+        raise RuntimeError("replace_results needs an idle connection; end the open transaction first")
+    with connection.transaction():
+        if not selected:
+            return
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM player_results WHERE game_id = ANY(%s)", (selected,))
+            cursor.execute("DELETE FROM team_results WHERE game_id = ANY(%s)", (selected,))
+            if teams:
+                cursor.executemany(TEAM_INSERT, teams)
+            if players:
+                cursor.executemany(PLAYER_INSERT, players)
 
 
 def summarize(teams: list[dict], players: list[dict]) -> str:
@@ -102,8 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check-reimport", action="store_true")
     args = parser.parse_args(argv)
+    selected = selected_game_ids(args.data_dir)
     teams, players = load_results(args.data_dir)
-    print(summarize(teams, players))
+    print(f"{summarize(teams, players)}; selected games {len(selected)}")
     if args.dry_run or not os.environ.get("DATABASE_URL"):
         print("Database verification is pending.")
         return 2 if not args.dry_run else 0
@@ -115,8 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         apply_results_schema(connection)
         before = _counts(connection)
-        replace_results(connection, teams, players)
+        connection.commit()
+        replace_results(connection, teams, players, selected)
         after = _counts(connection)
+        connection.commit()
         if after["matches"] != before["matches"] or after["player_frames"] != before["player_frames"]:
             print("replay row counts changed; import stopped being repeatable")
             return 1
@@ -128,8 +157,9 @@ def main(argv: list[str] | None = None) -> int:
             f"(was {before['team_results']}), player_results {after['player_results']}"
         )
         if args.check_reimport:
-            replace_results(connection, teams, players)
+            replace_results(connection, teams, players, selected)
             again = _counts(connection)
+            connection.commit()
             if again != after:
                 print("reimport changed counts")
                 return 1
