@@ -204,7 +204,17 @@ async function loadFrame(elapsed) {
     if (frame) shown.textContent = `loading · showing ${mmss(frame.elapsed)}`;
   } else if (frame) {
     shown.textContent = frame.elapsed === Number(timeInput.value) ? `showing ${mmss(frame.elapsed)}` : `showing ${mmss(frame.elapsed)} (latest stored second)`;
+    loadTactical();
   }
+}
+
+// Explanatory panel, loaded once seeking has been still for 250 ms.
+let tacticalTimer = null;
+function loadTactical() {
+  clearTimeout(tacticalTimer);
+  tacticalTimer = setTimeout(() => {
+    if (window.Tactical && frame && summary) window.Tactical.load(summary.game_id, frame.t, selectedTeam(), summary.squads);
+  }, 250);
 }
 
 // A recorded result from the replay, not a model output.
@@ -409,7 +419,7 @@ function renderEvaluation(evaluation) {
 
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); });
+squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); loadTactical(); });
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
 loadBackend();
 loadMatches();

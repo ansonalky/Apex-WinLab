@@ -20,11 +20,12 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template
+from flask import Flask, abort, jsonify, render_template, request
 
 from dashboard_data import MatchStore
 from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
+from tactical import TacticalIndex
 from stats_api import stats_bp
 
 
@@ -78,6 +79,8 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     # Per-second predictions are computed from the local replay and the frozen
     # model files under either backend, and cached in memory.
     live = LivePredictions(data_dir.resolve())
+    # Explanatory tactical measurements from the local replay; not a model input.
+    tactical = TacticalIndex(data_dir.resolve())
 
     @app.get("/")
     def index():
@@ -133,6 +136,17 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         response = jsonify(frame)
         response.headers["Server-Timing"] = f"frame;dur={frame_ms:.1f}, total;dur={total_ms:.1f}"
         return response
+
+    @app.get("/api/matches/<int:game_id>/tactical")
+    def match_tactical(game_id: int):
+        try:
+            t = int(request.args["t"])
+        except (KeyError, ValueError):
+            return jsonify({"error": "t is required"}), 400
+        team = request.args.get("team")
+        if not team:
+            return jsonify({"error": "team is required"}), 400
+        return jsonify(tactical.at(game_id, t, team))
 
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):
