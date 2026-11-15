@@ -2,21 +2,25 @@
 .event-timeline { position: relative; margin: 0.8rem 0.5rem 0; }
 .event-timeline[hidden], .event-timeline [hidden] { display: none !important; }
 .event-timeline .timeline-track { position: relative; height: 22px; background: transparent; border-radius: 0; overflow: visible; cursor: pointer; }
-.timeline-track::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 4px; background: #2865a5; border-radius: 2px; }
+.timeline-track::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 3px; background: #3975b5; border-radius: 2px; }
 .event-timeline .timeline-mark { position: absolute; display: flex; justify-content: center; align-items: center; gap: 1px; top: 0; height: 24px; min-width: 12px; width: auto; padding: 0 3px; margin: 0; transform: translateX(-50%); border: 0; border-radius: 2px; background: transparent; cursor: pointer; }
 .timeline-tick { display: block; flex: 0 0 2px; width: 2px; height: 10px; background: #a0cbe8; }
-.timeline-tick.kill { background: #3dd68c; }
-.timeline-tick.knock { background: #7fd3ea; }
+.timeline-tick.kill { height: 9px; background: #3dd68c; }
+.timeline-tick.knock { height: 8px; background: #7fd3ea; }
 .timeline-tick.death { background: #e85d4c; }
 .timeline-tick.squad_elimination { background: #e85d4c; outline: 1px solid white; }
-.timeline-tick.ring-close { background: #f0c14a; }
+.timeline-tick.ring-close { height: 12px; background: #f0c14a; }
 .timeline-tick.ring-start { width: 4px; flex-basis: 4px; background: #161a20; border: 1px solid #f0c14a; box-sizing: border-box; }
-.event-timeline .timeline-playhead { position: absolute; top: -5px; bottom: auto; width: 0; height: 0; margin: 0; transform: translateX(-50%); border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid white; background: transparent; pointer-events: auto; cursor: ew-resize; }
+.event-timeline .timeline-playhead { position: absolute; top: 1px; bottom: auto; width: 0; height: 0; margin: 0; transform: translateX(-50%); border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid white; background: transparent; pointer-events: auto; cursor: ew-resize; }
 .timeline-mark:focus-visible, .timeline-playhead:focus-visible { outline: 2px solid white; outline-offset: 3px; }
 .timeline-endpoints { display: flex; justify-content: space-between; color: #b7beca; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
-.event-timeline .timeline-tip { position: absolute; bottom: 100%; z-index: 12; box-sizing: border-box; width: max-content; max-width: min(26rem, 100%); max-height: 16rem; overflow: auto; margin: 0; min-height: 0; padding: 0.5rem; background: #121418; border: 1px solid #4e79a7; border-radius: 6px; box-shadow: 0 4px 16px #0008; font-size: 0.8rem; }
+.event-timeline .timeline-tip { position: absolute; bottom: 100%; z-index: 12; box-sizing: border-box; width: max-content; max-width: min(26rem, 100%); max-height: 16rem; overflow: auto; margin: 0; min-height: 0; padding: 0.5rem; background: #121418; border: 1px solid #4e79a7; border-radius: 6px; box-shadow: 0 4px 16px #0008; font-size: 0.8rem; line-height: 1.45; }
 .timeline-tip strong { display: block; margin-bottom: 0.3rem; }
 .timeline-tip button { display: block; width: 100%; padding: 0.35rem; background: transparent; border: 0; color: #e7e9ee; font: inherit; text-align: left; cursor: pointer; }
 .timeline-tip button:hover, .timeline-tip button:focus-visible { background: #26374c; outline: 1px solid #a0cbe8; }
 .timeline-key { margin-top: 0.15rem; color: #b7beca; font-size: 0.72rem; }
 .timeline-key p { max-width: 65rem; }
+
+/* Keep the active cluster visible when its details cover part of the map. */
+.timeline-mark:hover .timeline-tick, .timeline-mark[aria-expanded="true"] .timeline-tick { filter: brightness(1.25); box-shadow: 0 0 4px #c5def055; }
+.timeline-tip button + button { border-top: 1px solid #26303d; }
