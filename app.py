@@ -376,15 +376,20 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
             game_number = None if game_number in (None, "") else int(game_number)
         except (TypeError, ValueError):
             return jsonify({"status": "error", "message": "Choose a game number from the list."}), 400
-        result = open_match(
-            body.get("url") or "",
-            data_dirs=[root, *expansion_dirs(), root / "user-imports"],
-            import_dir=root / "user-imports",
-            cache_dir=root / "open-cache",
-            client=ApiClient(),
-            game_number=game_number,
-            database="auto",
-        )
+        try:
+            result = open_match(
+                body.get("url") or "",
+                data_dirs=[root, *expansion_dirs(), root / "user-imports"],
+                import_dir=root / "user-imports",
+                cache_dir=root / "open-cache",
+                client=ApiClient(),
+                game_number=game_number,
+                database="auto",
+            )
+        except Exception as exc:  # report the failing step without paths, URLs or credentials
+            app.logger.exception("open-match failed")
+            return jsonify({"status": "error", "message": f"Opening this URL failed on the server ({type(exc).__name__}). "
+                                                          "Nothing was saved. Details are in the server log."}), 500
         code = 200 if result.get("status") in ("ready", "exists", "choose", "retry") else 400
         return jsonify(result), code
 

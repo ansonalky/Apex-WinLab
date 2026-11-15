@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import threading
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Callable
 
 from dashboard_data import sort_matches
 
@@ -119,6 +119,10 @@ def _frame(rows: list) -> dict:
     }
 
 
+class _ConnectionLost(Exception):
+    """Internal: the reused connection was lost mid-query (cause: the psycopg error)."""
+
+
 class TigerReader:
     """Read-only queries over one reused connection (reopened if it drops)."""
 
@@ -138,10 +142,33 @@ class TigerReader:
                 self._conn = psycopg.connect(self._dsn, autocommit=True, connect_timeout=20)
             try:
                 yield self._conn
-            except psycopg.OperationalError:
+            except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+                # The server can end an idle connection (e.g. "terminating connection due to
+                # administrator command"); psycopg then marks it closed or broken. A failed
+                # query on a live connection (a cancelled statement, a timeout) leaves it usable.
+                lost = self._conn.closed or getattr(self._conn, "broken", False)
                 self._conn.close()
                 self._conn = None
+                if lost:
+                    raise _ConnectionLost() from exc
                 raise
+
+    def _read(self, query: Callable[[Any], Any]) -> Any:
+        """Run one read-only query; if the connection itself was lost, reconnect and run it once more.
+
+        Only connection loss is retried, and only once. Query errors are raised as they are,
+        and nothing here writes, so a repeat cannot apply anything twice.
+        """
+        try:
+            with self._connection() as connection:
+                return query(connection)
+        except _ConnectionLost:
+            pass
+        try:
+            with self._connection() as connection:
+                return query(connection)
+        except _ConnectionLost as lost:
+            raise lost.__cause__ from None
 
     def close(self) -> None:
         with self._lock:
@@ -151,15 +178,16 @@ class TigerReader:
 
     def ping(self) -> dict:
         """``SELECT 1`` and the number of imported matches."""
-        with self._connection() as connection:
+        def query(connection):
             one = connection.execute("SELECT 1").fetchone()[0]
             exists = connection.execute("SELECT to_regclass('public.matches') IS NOT NULL").fetchone()[0]
-            matches = connection.execute("SELECT count(*) FROM matches").fetchone()[0] if exists else 0
+            return one, connection.execute("SELECT count(*) FROM matches").fetchone()[0] if exists else 0
+
+        one, matches = self._read(query)
         return {"select_1": one, "matches": matches}
 
     def list_matches(self) -> list[dict]:
-        with self._connection() as connection:
-            rows = connection.execute(LIST_MATCHES).fetchall()
+        rows = self._read(lambda connection: connection.execute(LIST_MATCHES).fetchall())
         return sort_matches([
             {
                 "game_id": row[0],
@@ -179,8 +207,7 @@ class TigerReader:
         ])
 
     def match(self, game_id: int) -> dict | None:
-        with self._connection() as connection:
-            row = connection.execute(MATCH, (game_id,)).fetchone()
+        row = self._read(lambda connection: connection.execute(MATCH, (game_id,)).fetchone())
         if row is None:
             return None
         keys = ("game_id", "session_id", "event", "map_name", "quality_score", "organizer_username",
@@ -189,18 +216,15 @@ class TigerReader:
         return dict(zip(keys, row))
 
     def list_squads(self, game_id: int) -> list[dict]:
-        with self._connection() as connection:
-            rows = connection.execute(LIST_SQUADS, (game_id,)).fetchall()
+        rows = self._read(lambda connection: connection.execute(LIST_SQUADS, (game_id,)).fetchall())
         return [{"team_id": row[0], "team_name": row[1]} for row in rows]
 
     def frame_times(self, game_id: int) -> list[dict]:
-        with self._connection() as connection:
-            rows = connection.execute(FRAME_TIMES, (game_id,)).fetchall()
+        rows = self._read(lambda connection: connection.execute(FRAME_TIMES, (game_id,)).fetchall())
         return [{"t": row[0], "elapsed": row[1]} for row in rows]
 
     def frame_at_or_before(self, game_id: int, t: int) -> dict | None:
-        with self._connection() as connection:
-            rows = connection.execute(FRAME_AT_ROWS, (game_id, game_id, t)).fetchall()
+        rows = self._read(lambda connection: connection.execute(FRAME_AT_ROWS, (game_id, game_id, t)).fetchall())
         if not rows:
             return None
         return _frame(rows)
@@ -227,8 +251,7 @@ class TigerReader:
     def estimates(self, game_id: int, prediction_kind: str) -> list[dict]:
         if prediction_kind not in KINDS:
             raise ValueError("prediction_kind must be held_out or final_model_fitted")
-        with self._connection() as connection:
-            rows = connection.execute(ESTIMATES, (game_id, prediction_kind)).fetchall()
+        rows = self._read(lambda connection: connection.execute(ESTIMATES, (game_id, prediction_kind)).fetchall())
         keys = ("t", "elapsed_s", "ts", "team_id", "model_version", "model_probability", "baseline_name",
                 "baseline_probability", "in_contention", "eliminated", "elimination_verified",
                 "model_probability_raw")
@@ -237,8 +260,7 @@ class TigerReader:
     def prediction_history(self, game_id: int, team_id: int, prediction_kind: str) -> list[dict]:
         if prediction_kind not in KINDS:
             raise ValueError("prediction_kind must be held_out or final_model_fitted")
-        with self._connection() as connection:
-            rows = connection.execute(PREDICTION_HISTORY, (game_id, team_id, prediction_kind)).fetchall()
+        rows = self._read(lambda connection: connection.execute(PREDICTION_HISTORY, (game_id, team_id, prediction_kind)).fetchall())
         return [
             {
                 "t": row[0],
@@ -254,8 +276,7 @@ class TigerReader:
         ]
 
     def evaluation_report(self) -> dict[str, Any] | None:
-        with self._connection() as connection:
-            row = connection.execute(EVALUATION).fetchone()
+        row = self._read(lambda connection: connection.execute(EVALUATION).fetchone())
         if row is None:
             return None
         return {

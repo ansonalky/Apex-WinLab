@@ -202,3 +202,15 @@ Real reviews after the change (game 123633, team 11):
 | Engagement, 14:15, retry | accepted | 26.8 s |
 
 Every accepted terrain mention was conditional or stated as unknown. Ring wording matched the shared labels: "Ring 2 closed · ring 3 next", "Ring 3 closed · ring 4 next" and "Ring 4 closing". The prompts tell the model to use `label`/`ring_number` and never `stage_raw`.
+
+## Test previews (fixture server)
+
+To look at loading, failure and retry states without a provider, run
+`.venv/bin/python tests/fixture_server.py --port 5059`. Every page it serves
+carries a red **TEST PREVIEW — NO LIVE PROVIDER** banner and title prefix and an
+`X-Test-Preview: 1` header. Coach and decision requests return a labelled
+fixture error, the coach status reports provider `fixture`, and other POSTs
+(such as URL imports) are refused with a labelled message. It binds 127.0.0.1
+and refuses the real dashboard ports 5050 and 5051. Do not wrap `create_app`
+in ad hoc fixture scripts: an unlabelled fixture page looks like the real
+dashboard and its canned errors read like live failures.

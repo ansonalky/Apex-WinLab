@@ -1342,6 +1342,22 @@ function setOpenStatus(text, tone) {
   status.classList.toggle("unavailable", tone === "error");
 }
 
+// One line saying why a URL import did not open. Server text is used when it
+// has some (shown as text, never HTML), cleaned of control characters and
+// capped; otherwise the HTTP status says which stage refused it.
+function importErrorText(result, httpStatus) {
+  const raw = result && (result.message || result.error);
+  const clean = typeof raw === "string" ? raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() : "";
+  if (clean) return clean.length > 240 ? `${clean.slice(0, 239)}…` : clean;
+  if (httpStatus === 401) return "This dashboard needs you to sign in again before it can open URLs.";
+  if (httpStatus === 403) return "Opening Overstat URLs is turned off on this server.";
+  if (httpStatus === 404 || httpStatus === 405) return "This server does not offer Overstat URL imports.";
+  if (httpStatus === 429) return "Too many requests. Wait and try the same URL again.";
+  if (httpStatus >= 500) return `The server failed while opening this URL (HTTP ${httpStatus}). Nothing was saved.`;
+  if (httpStatus) return `The server could not open this URL (HTTP ${httpStatus}). Nothing was saved.`;
+  return "This URL could not be opened.";
+}
+
 async function openOverstat(url, gameNumber) {
   const choices = document.querySelector("#open-choices");
   setOpenStatus("Opening…");
@@ -1350,15 +1366,21 @@ async function openOverstat(url, gameNumber) {
   const body = { url };
   if (gameNumber != null) body.game_number = gameNumber;
   let result = null;
+  let httpStatus = null;
   try {
     const response = await fetch("/api/open-match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    result = await response.json();
+    httpStatus = response.status;
+    result = await response.json().catch(() => null);
   } catch (error) {
-    setOpenStatus("The match could not be opened.", "error");
+    setOpenStatus("Could not reach the dashboard server, so nothing was opened. Check that it is running.", "error");
+    return;
+  }
+  if (!result || typeof result !== "object") {
+    setOpenStatus(importErrorText(null, httpStatus), "error");
     return;
   }
   if (result.status === "choose") {
@@ -1377,11 +1399,11 @@ async function openOverstat(url, gameNumber) {
     return;
   }
   if (result.status === "retry") {
-    setOpenStatus(result.message || "Overstat rate-limited this request. Wait and try the same URL again.", "error");
+    setOpenStatus(importErrorText(result, httpStatus) || "Overstat rate-limited this request. Wait and try the same URL again.", "error");
     return;
   }
   if (result.status !== "ready" && result.status !== "exists") {
-    setOpenStatus(result.message || "This URL could not be opened.", "error");
+    setOpenStatus(importErrorText(result, httpStatus), "error");
     return;
   }
   const saved = result.storage !== "preview";

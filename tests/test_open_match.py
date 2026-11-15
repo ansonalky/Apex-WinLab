@@ -83,6 +83,12 @@ class ParseTest(unittest.TestCase):
         standings = parse_overstat_url("https://overstat.gg/tournament/octanecollegiate/23231/standings/3")
         self.assertEqual(standings["game_number"], 3)
 
+    def test_nested_tournament_slug_replay_url(self):
+        # Reported URL: organizer id, "{session}.{slug}" segment, then /replay/{game number}.
+        url = "https://overstat.gg/tournament/269/23108.S5_Premier_Lobby2_Week_5/replay/1"
+        for variant in (url, url + "/?utm_source=share&tab=map", url + "#players", url + "/?x=1#y"):
+            self.assertEqual(parse_overstat_url(variant), {"session_id": 23108, "game_number": 1, "kind": "replay"}, variant)
+
     def test_other_hosts_and_pages_are_rejected(self):
         for url in (
             "https://example.com/tournament/octanecollegiate/23231/replay/3",
@@ -152,6 +158,21 @@ class OpenTest(unittest.TestCase):
         self.assertEqual(result["game_id"], 880001)
         self.assertFalse(any("livedata" in url for url in client.calls))
         self.assertEqual(result["_saved_ids"], [])
+
+    def test_nested_slug_url_opens_game_number_1_not_game_id_1(self):
+        # Game number 1 is game id 880101. Another game has id 1, which must not be chosen.
+        games = [_game(880101, 1, "ld-1", "mid-1"), _game(1, 2, "ld-2", "mid-2")]
+        self._manifest(self.root, 880101, "ld-1", "mid-1", "b" * 64)
+        client = FakeClient(_routes(games, _stats(880101, 4.8), b"telemetry"))
+        url = "https://overstat.gg/tournament/269/4242.S5_Premier_Lobby2_Week_5/replay/1/?utm_source=share"
+        first = self._open(url, client)
+        self.assertEqual((first["status"], first["game_id"]), ("exists", 880101))
+        self.assertFalse(any("livedata" in call for call in client.calls))
+        requests = len(client.calls)
+        again = self._open(url, client)
+        self.assertEqual((again["status"], again["game_id"]), ("exists", 880101))
+        self.assertEqual(len(client.calls), requests)  # the cached session list is reused
+        self.assertEqual(again["_saved_ids"], [])
 
     def test_matching_replay_hash_opens_the_stored_game(self):
         raw = json.dumps(fixture.series()).encode()
@@ -257,6 +278,23 @@ class OpenTest(unittest.TestCase):
         manifest = json.loads((self.root / "user-imports" / "collection" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(list(manifest["games"]), ["880070"])
         self.assertEqual(sum(len(result["_saved_ids"]) for result in results), 1)
+
+    def test_unexpected_failure_is_a_specific_json_error_without_details(self):
+        from unittest import mock
+
+        from app import create_app
+
+        client = create_app(self.root).test_client()
+        secret = "postgresql://user:hunter2@db.example/tsdb"
+        with mock.patch("app.open_match", side_effect=RuntimeError(f"connect failed for {secret}")):
+            response = client.post("/api/open-match", json={"url": "https://overstat.gg/replay/4242/1"})
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json()
+        self.assertEqual(body["status"], "error")
+        self.assertIn("RuntimeError", body["message"])
+        self.assertIn("Nothing was saved", body["message"])
+        self.assertNotIn("hunter2", response.get_data(as_text=True))
+        self.assertNotIn("postgresql", response.get_data(as_text=True))
 
     def test_saved_match_reopens_after_a_new_app_and_a_preview_can_be_sought(self):
         from app import create_app
