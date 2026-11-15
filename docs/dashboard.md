@@ -103,46 +103,27 @@ Arrows change the displayed card only. They never seek, move the camera or call 
 | Map config and image | `map_config.py` and `static/maps/*.webp` |
 | Current ring (`/api/matches/<id>/ring`) | The local replay payload at the manifest's `download_path`, read by `map_config.load_rings` (`DATA/collection/manifest.json` is required) |
 
-So the Tiger-backed dashboard still needs the local data directory for the ring.
+So the Tiger-backed dashboard still needs the local original `data/` directory for the ring, and `--expansion-dir` for an expansion game's replay.
 
 Quality on the selector is the manifest's unrounded per-game score. It is not a model feature. The match dropdown lists numeric quality from highest to lowest, with missing scores last and the higher game id first when scores tie.
 
-`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The visible label is “New match.” The help text and Model details say it is a forward pass of that model, not a held-out evaluation and not fitted on this game, when the game id and replay hash are both absent from the training inventory. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
+`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The visible badge is **New match.** The help text and Model details say it is a forward pass of that model, not a held-out evaluation and not fitted on this game, when the game id and replay hash are both absent from the training inventory. On this database the menu is 100 matches: 51 `original` and 49 `accepted-expansion-49` (read from `/api/matches` on 2026-11-14). That catalog is not the six-game test set. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
 
-Opening an Overstat URL is documented in [open-match.md](open-match.md). A saved import is a separate `user-import` collection. A temporary preview stays out of Tiger Data and expires after 24 hours.
+Opening an Overstat URL is documented in [open-match.md](open-match.md). A saved import is a separate `user-import` collection and uses the same **New match** badge. A temporary preview stays out of Tiger Data and expires after 24 hours. The demo link for the held-out script is `http://127.0.0.1:5050/?game=123633&team=20` (squad 20 is EQT). Opening the site with no query selects the first held-out game in quality order, which is not 123633.
 
 ## Launch
 
-From the repository root, with this machine's telemetry:
+From the repository root. `data/` is the original directory. The expansion directory is separate and gitignored with it. `DATABASE_URL` comes from `.env` and is never printed. `requirements.txt` installs Flask, psycopg, and the coach SDKs.
 
 ```sh
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py --data-dir data --port 5050
+set -a; . ./.env; set +a
+.venv/bin/python app.py --data-dir data --port 5050 --backend tiger --expansion-dir /Users/ansonlin/Apex-WinLab-expansion/data
 ```
 
-On a Mac, pass the directory that contains `collection/` and `raw/`:
-
-```sh
-.venv/bin/python app.py --data-dir /path/to/data --port 5050
-```
-
-Open `http://127.0.0.1:5050`. Port 5000 is taken by macOS AirPlay Receiver on this Mac.
-
-## Integration checklist
-
-- [ ] `collection/manifest.json` lists the match as `acceptance_status: accepted`.
-- [ ] The raw timeseries is readable from `download_path` or `data/raw/<livedata_id>.timeseries.json`.
-- [ ] The first page loads that match, its squads, and a time slider in MM:SS from Playing start.
-- [ ] Moving the slider changes positions without a new full replay (the timeline is cached).
-- [ ] Health, shields, and status for the selected squad use `unknown` when the replay has no value.
-- [ ] Held-out panel is primary on the 6 test games, says Not available for the other 45, and shows the past checkpoint's own time.
-- [ ] Final-model panel says Not available unless `models/model.json` exists, and is labeled fitted on these games.
-- [ ] Largest-changes lists for held-out and the final model stay separate. A row seeks with the slider. A missing model says Not available and does not invent a highlight. The recorded result is not a row.
-- [ ] The evaluation panel says Not available unless `models/report.json` has `evaluation.status == "ok"`.
-- [ ] `overstat_patch.py` and the frozen evaluation (`config/frozen_evaluation.json`) are unchanged by dashboard commits.
+Open `http://127.0.0.1:5050`. Port 5000 is taken by macOS AirPlay Receiver on this Mac. `--backend files` reads only the directories you pass; it does not use Tiger.
 
 ## Tests
 
 ```sh
-.venv/bin/python -m unittest tests.test_dashboard -q
+.venv/bin/python -m unittest discover -s tests -q
 ```

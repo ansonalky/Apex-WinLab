@@ -1,6 +1,6 @@
 # Open an Overstat match
 
-The match page has an **Open Overstat match** field next to the match selector. Paste a public Overstat URL. The dashboard parses it and never fetches that URL. Replay and session requests go only to `https://overstat.gg/api/...`. A redirect off that API host is refused. HTTP 429 stops the attempt, keeps the session list when it was already downloaded, and asks for a manual retry. There is no automatic second request.
+The match page has an **Overstat URL** field and an **Open** button next to the match selector. Paste a public Overstat URL. The dashboard parses it and never fetches that pasted URL. Replay and session requests go only to `https://overstat.gg/api/...`. A redirect off that API host is refused. HTTP 429 stops the attempt, keeps the session list when it was already downloaded, and asks for a manual retry. There is no automatic second request. Import progress and errors stay on the page.
 
 ## URLs
 
@@ -26,6 +26,14 @@ Opening a game id, livedata id, or `mid` that is already stored opens that match
 
 ## Predictions
 
-Saved imports and previews use the same forward pass as the expansion games: unchanged `models/model.json` and its saved scaler, per second, with the winner left out of the inputs. The verified-unseen label is “New-match prediction · model trained on the original 51 games.” Membership compares the game id and the replay sha256 with `trained_on_games` and the original manifest hashes. If that cannot be verified, the page says so and coaching does not treat the estimate as independent evidence. A preview also says that performance on low-quality preview matches has not been established.
+Saved imports and previews use the same forward pass as the expansion games: unchanged `models/model.json` and its saved scaler, per second, with the winner left out of the inputs. The header badge is **New match**. When the game id and the replay hash are both outside the original 51, Model details keeps “New-match prediction · model trained on the original 51 games.” If membership cannot be verified, the page says so and coaching does not treat the estimate as independent evidence. A preview also says that performance on low-quality preview matches has not been established.
+
+The preview `?` starts “Available for 24 hours. Not saved because …” and then names the recorded reason: quality below 7.0 (the stored score, two decimals, when it is known), unknown quality, the quality score could not be matched to this game, the winner is not verified, too little position data, the replay could not be fully reconstructed, or another named acceptance check. The check's own detail is appended when the record has one.
 
 The per-second table is computed in the background. Seeking is not blocked. Saved matches persist `new_match` rows for that game only. Preview estimates stay in memory and are not written to Tiger Data. Original games keep their held-out and fitted rows.
+
+## What has been tested
+
+`tests/test_open_match.py` drives `open_match` with a fake client and `tests/replay_fixture.py`. It covers the URL shapes, rejection of other hosts, save versus preview, a repeated open, and a 429 that is not retried. It does not contact Overstat.
+
+The URL table above was read from Overstat's public route bundles (`app.88b57234.js`, `2983.9143198a.js`, `9107.be2636c4.js`, `1265.c5830509.js`). That is a reading of the route table, not a completed replay download. This document does not claim a successful live import.

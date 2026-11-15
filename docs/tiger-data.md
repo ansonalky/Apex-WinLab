@@ -16,6 +16,8 @@ Ingestion is `tiger_schema.sql`, `tiger_rows.py`, and `import_tiger.py`. The das
 | `squad_estimates` | 41,670: `final_model_fitted` 37,544 (51 games), `held_out` 4,126 (6 games) |
 | `evaluation_reports` | 1 |
 
+This table is the original import, counted on 2026-11-14. It was not remeasured after the expansion games were loaded. The dashboard match list on this database later showed 100 matches: 51 `original` and 49 `accepted-expansion-49`. That is a catalog count from `/api/matches`, not a new audit of `player_frames` or `squad_estimates`. Saved new-match predictions can add `prediction_kind = new_match` rows for one game; those rows are not in the table above.
+
 Checks, read back from a new connection:
 - `--check-reimport` on 123349 leaves every count unchanged.
 - No duplicate `(ts, game_id, player_id)` rows.
@@ -40,7 +42,8 @@ Map and ring are **not** in the database. Under every backend they come from `ma
 | `prediction_kind` | Source | Games |
 | --- | --- | --- |
 | `held_out` | `data/exports/heldout-session-split-v2/` only, validated by `dashboard_data.load_heldout_bundle` (labels and sha256) and joined on `(game_id, t, teamId)` | The 6 test games |
-| `final_model_fitted` | Forward pass of `data/models/model.json` | All accepted games (all of them were in its fit) |
+| `final_model_fitted` | Forward pass of `data/models/model.json` | The original games that were in its fit |
+| `new_match` | Forward pass of the same saved model, for an expansion game or a URL import. Not a held-out row and not fit on that game. See `docs/open-match.md`. | Only games opened after that path existed. No row count is claimed here. |
 
 - `model_probability` is **eligibility-constrained**: squads with a verified elimination at or before `t` get exactly 0, and the rest are renormalized.
 - `model_probability_raw` keeps the unconstrained output.
@@ -66,8 +69,10 @@ set -a; . ./.env; set +a
 .venv/bin/python import_tiger.py --data-dir data --game-id 123349 --dry-run
 .venv/bin/python import_tiger.py --data-dir data --game-id 123349 --check-reimport
 .venv/bin/python import_tiger.py --data-dir data --all
-.venv/bin/python app.py --data-dir data --port 5050 --backend auto
+.venv/bin/python app.py --data-dir data --port 5050 --backend tiger --expansion-dir /Users/ansonlin/Apex-WinLab-expansion/data
 ```
+
+`--all` imports `data/` only. The expansion directory is a separate tree. The server command above is the one that serves the 100-match catalog: Tiger for stored rows, and `--expansion-dir` so those games' replay files are registered. `DATABASE_URL` stays in `.env` and is not printed.
 
 Every import verifies database counts and sampled player states against the local files and prints any problem. `--check-reimport` also runs a second import and a frames-only import, and requires all counts to stay unchanged.
 
