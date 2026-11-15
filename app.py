@@ -27,6 +27,7 @@ from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
 from tactical import TacticalIndex
 from stats_api import stats_bp
+from turning_points import LABEL, HighlightCache, canonical_squad
 
 
 def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[object, dict]:
@@ -71,16 +72,31 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     if store is None:
         store, info = select_store(data_dir, backend)
     info = info or {"backend": getattr(store, "backend", "files"), "label": "", "detail": ""}
+    root = data_dir.resolve()
     app.config["DATA_BACKEND"] = info
     # The map and ring endpoints read local replay files under either backend.
-    app.config["DATA_DIR"] = data_dir.resolve()
+    app.config["DATA_DIR"] = root
     app.register_blueprint(map_bp)
     app.register_blueprint(stats_bp)
     # Per-second predictions are computed from the local replay and the frozen
     # model files under either backend, and cached in memory.
-    live = LivePredictions(data_dir.resolve())
+    live = LivePredictions(root)
+    # Same tables as the replay. The key is game, kind, squad, and model sha256.
+    highlights = HighlightCache()
     # Explanatory tactical measurements from the local replay; not a model input.
-    tactical = TacticalIndex(data_dir.resolve())
+    tactical = TacticalIndex(root)
+
+    def highlight_error(game_id: int, kind: str, reason: str) -> dict:
+        return {
+            "available": False,
+            "label": LABEL,
+            "game_id": game_id,
+            "kind": kind or None,
+            "error": reason,
+            "missing": [reason],
+            "up": [],
+            "down": [],
+        }
 
     @app.get("/")
     def index():
@@ -136,6 +152,28 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         response = jsonify(frame)
         response.headers["Server-Timing"] = f"frame;dur={frame_ms:.1f}, total;dur={total_ms:.1f}"
         return response
+
+    @app.get("/api/matches/<int:game_id>/highlights")
+    def match_highlights(game_id: int):
+        """Largest estimate changes for one squad and one prediction kind.
+
+        Held-out and final-model lists are separate requests. The recorded
+        result is not included; ``highlights_for_game`` stops at the cut-off.
+        """
+        kind = request.args.get("kind", "")
+        team = request.args.get("team", "")
+        if kind not in (HELD_OUT, FINAL):
+            return jsonify(highlight_error(game_id, kind, "kind must be held_out or final_model_fitted")), 400
+        if not team.strip():
+            return jsonify(highlight_error(game_id, kind, "team is required")), 400
+        summary = store.summary(game_id)
+        if summary is None:
+            abort(404)
+        squad_id = canonical_squad(team)
+        known = {canonical_squad(squad.get("teamId")) for squad in summary.get("squads") or []}
+        if squad_id not in known:
+            return jsonify(highlight_error(game_id, kind, "this squad is not in this match"))
+        return jsonify(highlights.get(root, game_id, kind, squad_id, live=live))
 
     @app.get("/api/matches/<int:game_id>/tactical")
     def match_tactical(game_id: int):

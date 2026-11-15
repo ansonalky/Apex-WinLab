@@ -5,8 +5,16 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from turning_points import LABEL, detect_turning_points, highlights_for_game, predictions_from_table, recorded_events
+from turning_points import (
+    LABEL,
+    HighlightCache,
+    detect_turning_points,
+    highlights_for_game,
+    predictions_from_table,
+    recorded_events,
+)
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 PROVENANCE = {"sha256": "abc", "file": "models/model.json", "kind": "final_model_fitted"}
@@ -46,6 +54,8 @@ class TurningPointTest(unittest.TestCase):
         self.assertGreater(highlight["windows_merged"], 1)
         self.assertLessEqual(highlight["episode_start_t"], highlight["start_t"])
         self.assertGreaterEqual(highlight["episode_end_t"], highlight["end_t"])
+        self.assertEqual(highlight["episode_start_elapsed"], highlight["episode_start_t"] - 100)
+        self.assertEqual(highlight["episode_end_elapsed"], highlight["episode_end_t"] - 100)
         self.assertEqual(highlight["seek"], {"game_id": 7, "t": 15, "elapsed": -85})
         self.assertIn("No knocks, revives, damage", highlight["description"])
 
@@ -148,6 +158,104 @@ class TurningPointTest(unittest.TestCase):
             self.assertTrue(any("model.json" in item for item in found["missing"]))
             self.assertEqual(found["up"], [])
             self.assertEqual(found["down"], [])
+
+
+class _Versioned:
+    def __init__(self, version):
+        self.version = version
+        self.tables = 0
+
+    def model(self, kind):
+        if self.version is None:
+            return None
+        return {"provenance": {"sha256": self.version, "kind": kind}}
+
+    def table(self, game_id, kind):
+        self.tables += 1
+        return {}
+
+
+class HighlightCacheTest(unittest.TestCase):
+    def test_key_is_game_kind_squad_and_model_version(self):
+        calls = []
+
+        def compute(data_dir, game_id, kind, squad_id=None, **kwargs):
+            live = kwargs["live"]
+            live.table(game_id, kind)
+            calls.append((kind, squad_id, live.version))
+            return {"available": True, "n": len(calls)}
+
+        live = _Versioned("abc")
+        cache = HighlightCache()
+        with patch("turning_points.highlights_for_game", side_effect=compute):
+            first = cache.get(DATA, 123633, "held_out", "20", live=live)
+            second = cache.get(DATA, 123633, "held_out", 20, live=live)
+            other_kind = cache.get(DATA, 123633, "final_model_fitted", 20, live=live)
+            live.version = "def"
+            other_version = cache.get(DATA, 123633, "held_out", 20, live=live)
+        self.assertIs(first, second)
+        self.assertEqual(live.tables, 3)
+        self.assertEqual(calls, [
+            ("held_out", 20, "abc"),
+            ("final_model_fitted", 20, "abc"),
+            ("held_out", 20, "def"),
+        ])
+        self.assertIsNot(other_kind, first)
+        self.assertIsNot(other_version, first)
+
+
+class EqtHighlightTest(unittest.TestCase):
+    def test_down_window_excludes_the_knock_and_the_recorded_result(self):
+        model = DATA / "models" / "model.json"
+        heldout_model = DATA / "exports" / "heldout-session-split-v2" / "evaluation_model.json"
+        if not model.is_file() or not heldout_model.is_file():
+            self.skipTest("frozen models are not on this machine")
+        from live_predictions import FINAL, HELD_OUT, LivePredictions
+
+        live = LivePredictions(DATA)
+        counts = []
+        real_table = live.table
+
+        def counting(game_id, kind):
+            counts.append((game_id, kind))
+            return real_table(game_id, kind)
+
+        live.table = counting
+        cache = HighlightCache()
+        held = cache.get(DATA, 123633, HELD_OUT, "20", live=live)
+        again = cache.get(DATA, 123633, HELD_OUT, 20, live=live)
+        final = cache.get(DATA, 123633, FINAL, 20, live=live)
+        self.assertIs(held, again)
+        # table() once for the list and once for the cut-off probe, per kind.
+        # The repeated held-out request is the cached list, not a new table.
+        self.assertEqual(counts, [
+            (123633, HELD_OUT),
+            (123633, HELD_OUT),
+            (123633, FINAL),
+            (123633, FINAL),
+        ])
+        self.assertTrue(held["available"])
+        self.assertTrue(final["available"])
+        self.assertNotEqual(held["provenance"]["sha256"], final["provenance"]["sha256"])
+        down = held["down"][0]
+        self.assertEqual(down["squad_name"], "EQT")
+        self.assertEqual((down["start_elapsed"], down["end_elapsed"]), (1093, 1113))
+        self.assertEqual((down["episode_start_elapsed"], down["episode_end_elapsed"]), (1085, 1129))
+        self.assertEqual(down["windows_merged"], 46)
+        self.assertFalse(down["start_t"] <= 1197 <= down["end_t"])
+        self.assertTrue(down["episode_start_t"] <= 1197 <= down["episode_end_t"])
+        self.assertNotIn(1197, [event["t"] for event in down["events"]])
+        self.assertEqual(down["prediction_kind"], HELD_OUT)
+        final_down = final["down"][0]
+        self.assertEqual((final_down["start_elapsed"], final_down["end_elapsed"]), (1093, 1113))
+        self.assertFalse(final_down["start_t"] <= 1197 <= final_down["end_t"])
+        self.assertEqual(final_down["prediction_kind"], FINAL)
+        for result in (held, final):
+            for item in result["up"] + result["down"]:
+                self.assertLess(item["end_t"], result["cutoff_t"])
+                self.assertLess(item["after"], 1.0)
+                self.assertNotEqual(item["seek"]["t"], 1197)
+                self.assertEqual(item["prediction_kind"], result["kind"])
 
 
 if __name__ == "__main__":

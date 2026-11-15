@@ -10,6 +10,8 @@ This module does not fit a model and does not change the frozen evaluation.
 from __future__ import annotations
 
 import json
+import re
+import threading
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -282,6 +284,14 @@ def detect_turning_points(
             for group in groups:
                 members = group["items"]
                 best = max(members, key=lambda item: (abs(item["change_pp"]), -item["window_s"], -item["start_t"]))
+                # Elapsed time is seconds since Playing start, so the episode
+                # uses the same origin as the representative window.
+                origin = None
+                start_elapsed = best.get("start_elapsed")
+                if isinstance(start_elapsed, int) and not isinstance(start_elapsed, bool):
+                    origin = best["start_t"] - start_elapsed
+                episode_start_t = members[0]["start_t"]
+                episode_end_t = group["end"]
                 highlight = {
                     "label": LABEL,
                     "game_id": game_id,
@@ -300,8 +310,10 @@ def detect_turning_points(
                     "provenance": provenance,
                     "windows_merged": len(members),
                     # The merged episode can be longer than the reported window.
-                    "episode_start_t": members[0]["start_t"],
-                    "episode_end_t": group["end"],
+                    "episode_start_t": episode_start_t,
+                    "episode_end_t": episode_end_t,
+                    "episode_start_elapsed": None if origin is None else episode_start_t - origin,
+                    "episode_end_elapsed": None if origin is None else episode_end_t - origin,
                     "seek": {"game_id": game_id, "t": best["start_t"], "elapsed": best["start_elapsed"]},
                 }
                 highlights.append(_attach(highlight, events or [], best["team_id"]))
@@ -323,6 +335,31 @@ def _missing(live: LivePredictions, game_id: Any, kind: str) -> list[str]:
     return [f"unknown prediction kind {kind}"]
 
 
+def canonical_squad(squad_id: Any) -> Any:
+    """Match query-string squad ids to numeric ``teamId`` values."""
+    if squad_id is None or isinstance(squad_id, bool):
+        return squad_id
+    if isinstance(squad_id, int):
+        return squad_id
+    text = str(squad_id).strip()
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    return text
+
+
+def model_version(live: LivePredictions, kind: str) -> str | None:
+    """The frozen file's sha256, or None when that model is not loaded."""
+    if kind not in (HELD_OUT, FINAL):
+        return None
+    model = live.model(kind)
+    if not model:
+        return None
+    provenance = model.get("provenance") or {}
+    if not isinstance(provenance, dict):
+        return json.dumps(provenance, sort_keys=True, default=str)
+    return provenance.get("sha256") or json.dumps(provenance, sort_keys=True, default=str)
+
+
 def highlights_for_game(
     data_dir: Path,
     game_id: Any,
@@ -341,6 +378,7 @@ def highlights_for_game(
     Pass the dashboard's ``live`` to reuse its cached prediction tables.
     """
     data_dir = Path(data_dir)
+    squad_id = canonical_squad(squad_id)
     live = live or LivePredictions(data_dir)
     if kind not in (HELD_OUT, FINAL) or not live.available(game_id, kind):
         return {
@@ -384,4 +422,41 @@ def highlights_for_game(
     found["available"] = True
     found["cutoff_t"] = cutoff
     found["missing"] = []
+    if found.get("kind") is None:
+        found["kind"] = kind
+    found["provenance"] = provenance
     return found
+
+
+class HighlightCache:
+    """Highlight lists keyed by game, prediction kind, squad, and model version.
+
+    The version is the frozen model's sha256. A different file does not reuse
+    an older list. ``live`` is the dashboard's ``LivePredictions``, so the
+    per-second tables are not built a second way.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values: dict[tuple, dict] = {}
+
+    def get(
+        self,
+        data_dir: Path,
+        game_id: Any,
+        kind: str,
+        squad_id: Any,
+        *,
+        live: LivePredictions,
+        **kwargs,
+    ) -> dict:
+        squad = canonical_squad(squad_id)
+        version = model_version(live, kind)
+        key = (str(game_id), str(kind), squad, version)
+        with self._lock:
+            cached = self._values.get(key)
+        if cached is not None:
+            return cached
+        result = highlights_for_game(data_dir, game_id, kind, squad, live=live, **kwargs)
+        with self._lock:
+            return self._values.setdefault(key, result)

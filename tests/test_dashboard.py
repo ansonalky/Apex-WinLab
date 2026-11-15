@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app import create_app
 from dashboard_data import MatchStore, build_timeline, evaluation_panel, prediction_curve
@@ -458,6 +459,83 @@ class BackendSelectionTest(unittest.TestCase):
             page = client.get("/").data
         self.assertEqual(info["backend"], "files")
         self.assertIn(b'id="backend"', page)
+
+
+def _demo_client():
+    tmp = tempfile.TemporaryDirectory()
+    data = Path(tmp.name)
+    (data / "collection").mkdir()
+    (data / "raw").mkdir()
+    raw = data / "raw" / "demo.timeseries.json"
+    raw.write_text(json.dumps({"series": _series()}), encoding="utf-8")
+    record = {
+        "acceptance_status": "accepted",
+        "game_id": 7,
+        "session_id": 3,
+        "event": "Demo Cup",
+        "map_name": "mp_rr_district_mu1",
+        "quality_score": 8.5,
+        "match_start": 10,
+        "livedata_id": "demo",
+        "download_path": raw.as_posix(),
+        "validation": {"winner": {"teamId": 1, "teamName": "Red", "label_source": "test"}},
+    }
+    (data / "collection" / "manifest.json").write_text(json.dumps({"games": {"7": record}}), encoding="utf-8")
+    return tmp, create_app(data).test_client()
+
+
+class HighlightApiTest(unittest.TestCase):
+    def test_missing_model_is_an_empty_honest_result(self):
+        tmp, client = _demo_client()
+        with tmp:
+            held = client.get("/api/matches/7/highlights?kind=held_out&team=1").get_json()
+            final = client.get("/api/matches/7/highlights?kind=final_model_fitted&team=1").get_json()
+        self.assertFalse(held["available"])
+        self.assertFalse(final["available"])
+        self.assertEqual(held["up"], [])
+        self.assertEqual(held["down"], [])
+        self.assertEqual(final["up"], [])
+        self.assertEqual(final["down"], [])
+        self.assertTrue(final["missing"])
+        self.assertTrue(any("model.json" in item for item in final["missing"]))
+        self.assertNotEqual(held["missing"], final["missing"])
+
+    def test_route_caches_by_kind_and_squad_and_rejects_a_bad_request(self):
+        tmp, client = _demo_client()
+        calls = []
+
+        def compute(data_dir, game_id, kind, squad_id=None, **kwargs):
+            self.assertIsNotNone(kwargs.get("live"))
+            calls.append((kind, squad_id))
+            return {
+                "available": True,
+                "label": "Largest changes in model estimate.",
+                "game_id": game_id,
+                "kind": kind,
+                "missing": [],
+                "up": [],
+                "down": [],
+            }
+
+        with tmp, patch("turning_points.highlights_for_game", side_effect=compute):
+            self.assertEqual(client.get("/api/matches/7/highlights").status_code, 400)
+            self.assertEqual(client.get("/api/matches/7/highlights?kind=nope&team=1").status_code, 400)
+            self.assertEqual(client.get("/api/matches/99/highlights?kind=held_out&team=1").status_code, 404)
+            unknown = client.get("/api/matches/7/highlights?kind=held_out&team=9").get_json()
+            self.assertFalse(unknown["available"])
+            self.assertEqual(unknown["up"], [])
+            self.assertIn("squad", unknown["missing"][0])
+            first = client.get("/api/matches/7/highlights?kind=held_out&team=1")
+            second = client.get("/api/matches/7/highlights?kind=held_out&team=1")
+            other = client.get("/api/matches/7/highlights?kind=final_model_fitted&team=2")
+            page = client.get("/").data
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.get_json(), second.get_json())
+        self.assertEqual(calls, [("held_out", 1), ("final_model_fitted", 2)])
+        self.assertEqual(other.get_json()["kind"], "final_model_fitted")
+        self.assertIn(b"Largest changes in model estimate", page)
+        self.assertIn(b'id="highlights-heldout"', page)
+        self.assertIn(b'id="highlights-final"', page)
 
 
 if __name__ == "__main__":

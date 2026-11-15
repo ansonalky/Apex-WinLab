@@ -9,6 +9,8 @@ const roster = document.querySelector("#roster");
 const curveBox = document.querySelector("#curve");
 const heldoutBox = document.querySelector("#heldout");
 const evalBox = document.querySelector("#evaluation");
+const heldoutHighlights = document.querySelector("#highlights-heldout");
+const finalHighlights = document.querySelector("#highlights-final");
 const outcome = document.querySelector("#outcome");
 const canvas = document.querySelector("#plot");
 const ctx = canvas.getContext("2d");
@@ -25,6 +27,7 @@ let requestToken = 0;
 // next and skips the ones in between.
 let inFlight = null;
 let pendingSeek = null;
+let highlightToken = 0;
 
 function mmss(seconds) {
   const whole = Math.max(0, Math.round(seconds));
@@ -100,6 +103,9 @@ async function loadMatch(gameId) {
   if (inFlight) inFlight.controller.abort();
   inFlight = null;
   pendingSeek = null;
+  highlightToken += 1;
+  heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
   timeInput.disabled = true;
   let nextSummary, nextCurve, nextHeldout, evaluation;
   try {
@@ -112,6 +118,8 @@ async function loadMatch(gameId) {
   } catch (error) {
     if (token !== requestToken) return;
     meta.textContent = `Match ${gameId} could not be loaded.`;
+    heldoutHighlights.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
+    finalHighlights.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
     console.error(error);
     return;
   }
@@ -155,6 +163,7 @@ async function loadMatch(gameId) {
   currentRing = null;
   renderEvaluation(evaluation);
   clock.textContent = mmss(0);
+  loadHighlights();
   await loadFrame(0);
 }
 
@@ -417,9 +426,160 @@ function renderEvaluation(evaluation) {
   `;
 }
 
+// One list per prediction kind. A click sets the slider, then uses the same
+// seek() path as dragging it, so the map, roster, ring, and both probability
+// panels stay on that second.
+function points(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "unknown";
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+}
+
+function kindName(kind) {
+  if (kind === "held_out") return "held-out";
+  if (kind === "final_model_fitted") return "final model, fitted on these games";
+  return kind || "unknown model";
+}
+
+function rangeLine(label, startElapsed, endElapsed, startT, endT, extra) {
+  const clock = startElapsed == null || endElapsed == null ? "time unknown" : `${mmss(startElapsed)}–${mmss(endElapsed)}`;
+  const replay = startT == null || endT == null ? "" : ` · replay t ${startT}–${endT}`;
+  return `<span class="line"><span class="tag">${esc(label)}</span> ${clock}${extra}${replay}</span>`;
+}
+
+function eventElapsed(item, event) {
+  if (event.elapsed != null && Number.isFinite(Number(event.elapsed))) return Number(event.elapsed);
+  if (item.start_elapsed == null || item.start_t == null || event.t == null) return null;
+  return Number(item.start_elapsed) + (Number(event.t) - Number(item.start_t));
+}
+
+function eventLine(item, event) {
+  const elapsed = eventElapsed(item, event);
+  const types = { knock: "knock", revive: "revive", squad_elimination: "squad elimination", respawn: "respawn" };
+  const sides = { squad: "this squad", opponent: "other squads", unattributed: "unattributed" };
+  const actor = event.actor_name || "";
+  const victim = event.victim_name || "";
+  const who = actor && victim ? `${actor} → ${victim}` : actor || victim;
+  const when = elapsed == null ? "time unknown" : mmss(elapsed);
+  return `<span class="line">${when} · ${esc(types[event.type] || event.type || "event")} · ${esc(sides[event.side] || event.side || "unattributed")}${who ? ` · ${esc(who)}` : ""}</span>`;
+}
+
+function highlightCard(item) {
+  const direction = item.direction === "down" ? "decrease" : item.direction === "up" ? "increase" : "change";
+  const prov = item.provenance || {};
+  const full = typeof prov.sha256 === "string" ? prov.sha256 : "";
+  const windows = Number(item.windows_merged);
+  const windowExtra = Number.isFinite(Number(item.window_s)) ? ` · ${Number(item.window_s)} seconds` : "";
+  const episodeExtra = Number.isFinite(windows) ? ` · ${windows} overlapping window${windows === 1 ? "" : "s"}` : "";
+  const events = (Array.isArray(item.events) ? item.events : []).map((event) => eventLine(item, event)).join("");
+  const elapsed = item.seek && item.seek.elapsed;
+  const clickable = elapsed != null && Number.isFinite(Number(elapsed));
+  const open = clickable
+    ? `<button type="button" class="highlight" data-elapsed="${Number(elapsed)}">`
+    : `<div class="highlight">`;
+  return `${open}
+    <strong>${esc(item.squad_name || "Squad")} · ${direction} ${points(item.change_pp)} percentage points</strong>
+    ${rangeLine("Representative window", item.start_elapsed, item.end_elapsed, item.start_t, item.end_t, windowExtra)}
+    <span class="line">Before ${pct(item.before)} → after ${pct(item.after)}</span>
+    ${rangeLine("Full episode", item.episode_start_elapsed, item.episode_end_elapsed, item.episode_start_t, item.episode_end_t, episodeExtra)}
+    <span class="line when" title="${esc(full)}">${esc(kindName(item.prediction_kind))} · ${esc(prov.file || "model file unknown")} · sha256 ${esc(full.slice(0, 12) || "unknown")}</span>
+    <span class="line">Coincident events in the representative window</span>
+    <span class="line when">${esc(item.description || "")}</span>
+    ${events}
+  ${clickable ? "</button>" : "</div>"}`;
+}
+
+function renderHighlights(box, result) {
+  try {
+    if (!result.ok || !result.body) {
+      const status = result.status ? ` (HTTP ${result.status})` : "";
+      const reason = result.body && (result.body.error || (result.body.missing || []).join("; "));
+      box.innerHTML = `<p class="unavailable">Could not load these highlights${status}.</p>${reason ? `<p>${esc(reason)}</p>` : ""}`;
+      return;
+    }
+    const data = result.body;
+    if (data.available !== true) {
+      const reasons = (data.missing || []).map((item) => `<p>${esc(item)}</p>`).join("");
+      const fallback = data.error ? `<p>${esc(data.error)}</p>` : "";
+      box.innerHTML = `<p class="unavailable">Not available</p>${reasons || fallback}`;
+      return;
+    }
+    const up = Array.isArray(data.up) ? data.up : [];
+    const down = Array.isArray(data.down) ? data.down : [];
+    const label = esc(data.label || "Largest changes in model estimate.");
+    if (!up.length && !down.length) {
+      box.innerHTML = `<p><strong>${label}</strong></p><p>No move of 5 percentage points or more for this squad. A window is kept only when every replay second in it has a prediction. The recorded result is not included.</p>`;
+      return;
+    }
+    const section = (title, items) => items.length ? `<h3>${title}</h3>${items.map(highlightCard).join("")}` : "";
+    box.innerHTML = `<p><strong>${label}</strong></p>
+      <p class="when">Click a row to move the slider to the start of that representative window. The change is in the model estimate. Listed events are coincident with the representative window, not a cause, and not the rest of the episode. The recorded result is not included.</p>
+      ${section("Increases", up)}
+      ${section("Decreases", down)}`;
+  } catch (error) {
+    box.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
+    console.error(error);
+  }
+}
+
+async function fetchHighlights(gameId, kind, team) {
+  const url = `/api/matches/${gameId}/highlights?kind=${encodeURIComponent(kind)}&team=${encodeURIComponent(team)}`;
+  try {
+    const response = await fetch(url);
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (error) {
+      body = null;
+    }
+    return { ok: response.ok, status: response.status, body };
+  } catch (error) {
+    return { ok: false, status: 0, body: null };
+  }
+}
+
+async function loadOneHighlight(box, kind, token, gameId, team) {
+  const result = await fetchHighlights(gameId, kind, team);
+  if (token !== highlightToken) return;
+  renderHighlights(box, result);
+}
+
+function loadHighlights() {
+  if (!summary) return;
+  const token = ++highlightToken;
+  const gameId = summary.game_id;
+  const team = selectedTeam();
+  heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  loadOneHighlight(heldoutHighlights, "held_out", token, gameId, team);
+  loadOneHighlight(finalHighlights, "final_model_fitted", token, gameId, team);
+}
+
+function seekHighlight(elapsed) {
+  const numeric = Number(elapsed);
+  if (!Number.isFinite(numeric)) return;
+  timeInput.value = String(numeric);
+  seek(Number(timeInput.value));
+}
+
+for (const box of [heldoutHighlights, finalHighlights]) {
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button.highlight");
+    if (!button || !box.contains(button) || button.dataset.elapsed === "") return;
+    seekHighlight(button.dataset.elapsed);
+  });
+}
+
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); loadTactical(); });
+squadSelect.addEventListener("change", () => {
+  loadHighlights();
+  if (!frame) return;
+  draw();
+  renderRoster();
+  renderPredictions();
+  loadTactical();
+});
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
 loadBackend();
 loadMatches();

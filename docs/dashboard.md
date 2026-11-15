@@ -43,6 +43,12 @@ Eligibility uses `features.contention` without the winner, so only elimination e
 
 `/api/matches/<id>/at/<t>` returns the frame, its ring, and the predictions made at that same second. The panel shows them with that timestamp. After the cut-off no prediction is made. From `WinnerDetermined` on, the panel shows the recorded outcome (verified winner 100%, others 0%), labeled as a result, not a prediction. The frozen 30-second checkpoints stay available as a separately labeled history. The evaluation report is still scored only at those 30-second checkpoints, and says so.
 
+**Largest changes in model estimate.** `GET /api/matches/<id>/highlights?kind=held_out|final_model_fitted&team=<teamId>` lists the largest moves in that squad's per-second estimate. The two kinds are separate requests, separate cache entries, and separate panels. The cache key is the game, the kind, the squad, and the frozen model's sha256. The handler reuses the `LivePredictions` tables already built for the replay; it does not fit a model or change the 5-point / 5–10–20-second windows. See `docs/turning-points.md`.
+
+Each row shows the representative window and the full merged episode as separate spans, then that window's before and after probabilities, the percentage-point change, the model file and sha256, and coincident events inside the representative window. Events that fall only in the rest of the episode are not listed on that row. Clicking a row sets the slider to the window's start and uses the same seek as dragging it.
+
+A failed request says the highlights could not be loaded. A missing model, a game outside the held-out split, or a squad that is not in the match says **Not available** and gives the reason, with empty lists. A model that ran and found no move of at least 5 percentage points says so. The recorded 100% at `WinnerDetermined` is not a highlight.
+
 **Known feature limitation (frozen model, not changed).** `hp_frac` sums health and shields over alive and downed players. The replay reports a downed player's health as the bleed-out pool, often 100/100, so a squad with a downed player looks healthier than its fighting strength. Example: game 123633 at 18:51, EQT (one alive, one downed). Correcting this needs a new feature and a refit, so it is left as is. The page notes it under the model inputs.
 
 **Seek performance and caching.** Each seek is one request. At most one frame request runs at a time; slider input while it runs only replaces the pending value. Match changes abort the request in flight. The selected time shows at once, and a separate label names the frame actually displayed. With `--backend tiger`, selecting a match loads that match's `player_frames` from Tiger Data in one indexed query, in the background on its own connection. The last three selected matches are kept in memory, and seeks are served from that copy. Until it loads, each seek is one Tiger query (about 80 ms here, mostly network round trip). Every frame response says which path served it (`read.via`). Per-second prediction tables are also held in memory per match.
@@ -94,6 +100,7 @@ Open `http://127.0.0.1:5050`. Port 5000 is taken by macOS AirPlay Receiver on th
 - [ ] Health, shields, and status for the selected squad use `unknown` when the replay has no value.
 - [ ] Held-out panel is primary on the 6 test games, says Not available for the other 45, and shows the past checkpoint's own time.
 - [ ] Final-model panel says Not available unless `models/model.json` exists, and is labeled fitted on these games.
+- [ ] Largest-changes lists for held-out and the final model stay separate. A row seeks with the slider. A missing model says Not available and does not invent a highlight. The recorded result is not a row.
 - [ ] The evaluation panel says Not available unless `models/report.json` has `evaluation.status == "ok"`.
 - [ ] `overstat_patch.py` and the frozen evaluation (`config/frozen_evaluation.json`) are unchanged by dashboard commits.
 

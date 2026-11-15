@@ -61,3 +61,22 @@ table.probs td.num, table.probs th.num { text-align: right; font-variant-numeric
 table.probs tr.selected { background: #263041; }
 table.probs tr.out { color: #6b7380; }
 .history { max-height: 10rem; overflow-y: auto; font-size: 0.8rem; color: #b7beca; margin-top: 0.4rem; }
+.highlights h3 { font-size: 0.85rem; margin: 0.85rem 0 0.15rem; color: #b7beca; font-weight: 600; }
+button.highlight,
+div.highlight {
+  display: block;
+  width: 100%;
+  margin: 0.45rem 0 0;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  white-space: normal;
+  background: #121418;
+  border: 1px solid #2c3340;
+  border-radius: 8px;
+}
+button.highlight { cursor: pointer; }
+button.highlight:hover,
+button.highlight:focus-visible { border-color: #4e79a7; }
+.highlight .line { display: block; margin-top: 0.2rem; }

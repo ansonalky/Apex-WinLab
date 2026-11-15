@@ -17,7 +17,7 @@ Run every command from the repository root. Python 3.12.3 is used here. The data
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt   # flask, psycopg[binary]
-.venv/bin/python -m unittest discover -s tests -q     # 123 tests, 1 skipped when a sample payload is absent
+.venv/bin/python -m unittest discover -s tests -q     # 149 tests, 1 skipped when a sample payload is absent
 ```
 
 **Credentials.** Put the Tiger Data connection string in `.env` as `DATABASE_URL=...`. `.env` is gitignored. Never commit it, paste it, or show it on screen. The importer and the dashboard never print it, and connection errors are redacted.
@@ -58,6 +58,8 @@ Use the default match: **duo kval lobby 1**, game 123633, session 23047, map `mp
 | 2:15–2:45 | Press End (19:29). | Banner: "Match finished at 18:57 (replay t 1206). Verified winner: феечки винкс." The panel shows the winner at 100% and everyone else at 0%, labeled **recorded outcome, not a model prediction**. No prediction is made after the result. |
 | 2:45–3:00 | The evaluation panel. | "Scored once on six held-out games at 30-second checkpoints: log loss 2.341 vs 2.419 for the contention baseline. A small, consistent edge; a first estimate, not a settled result." |
 
+**Largest changes in model estimate.** Under each probability panel, for the squad selected in the menu. The held-out list and the final-model list are separate. A row shows the representative window and the full episode as separate spans, with the window's before and after probabilities, the percentage-point change, the model file, and coincident events from that window. Clicking a row uses the same slider seek as dragging the time control. For EQT in game 123633, the largest held-out drop's representative window is 18:13–18:33 (59.6% to 35.1%). The episode is 18:05–18:49. NAGGI's knock at 18:48 sits in that episode and is not the selected window; the click seeks to 18:13. The recorded-result jump is not in either list.
+
 Optional, if asked about missing maps: game 123467 (`mp_rr_district_mu1_night`) shows "Map background unavailable"; nothing is drawn on another map's image.
 
 ## 3. Architecture (as implemented)
@@ -90,12 +92,13 @@ app.py (Flask) + static/*.js ──► dashboard
 | **Ring** | **Local replay files** (`map_config.load_rings`). Not in the database. |
 | **Map image and transform** | **Local** `map_config.py` and `static/maps/*.webp` |
 | **Per-second predictions** | **Computed locally** (`live_predictions.py`) from the local replay and the frozen model files |
+| **Largest changes in model estimate** | **Computed locally** from those same per-second tables (`turning_points.py`). Held-out and final model stay separate. Cached by game, kind, squad, and model sha256 |
 
 So the Tiger-backed demo still needs the local `data/` directory.
 
 **In-memory caching (disclosed on the page, in each frame's `read.via`):**
 - **Frames:** selecting a match starts one indexed Tiger query for that match's `player_frames` (about 40k rows), on its own connection in the background. The last 3 selected matches are kept in memory, and seeks are served from that copy. Until it loads (1.5–5 s), each seek is one Tiger query, about 80 ms here and almost all network round trip.
-- **Per-second prediction tables:** computed once per match and model, then kept in memory.
+- **Per-second prediction tables:** computed once per match and model, then kept in memory. Highlight lists reuse those tables and are cached again by game, prediction kind, squad, and model sha256.
 - **Measured** on a warmed match in the browser: a seek went from a median of 173 ms to 11 ms. Settling after a fast scrub went from 2.8 s to 11 ms. These figures are from one machine on one network.
 
 ## 4. Metrics and limitations (audited, frozen)
