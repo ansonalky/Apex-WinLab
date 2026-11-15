@@ -822,8 +822,7 @@ function renderNewMatchEstimate() {
   estimateBox.innerHTML = `<div class="estimate-head">
       <div class="estimate-value">${row ? pct(row.model) : "Unknown"}</div>
       <div class="estimate-text">
-        <strong>${teamTagFor(selectedTeam())}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
-        <span class="when">at ${mmss(live.point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
+        <strong>${teamTagFor(selectedTeam())}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}
       </div>
     </div>
     ${warn}
@@ -881,8 +880,7 @@ function renderEstimate() {
   estimateBox.innerHTML = `<div class="estimate-head">
       <div class="estimate-value">${row ? pct(row.model) : "Unknown"}</div>
       <div class="estimate-text">
-        <strong>${teamTagFor(team)}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
-        <span class="when">${tag}at ${mmss(point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
+        <strong>${teamTagFor(team)}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}${tag ? ` ${tag.trim()}` : ""}
       </div>
       ${info}
     </div>
