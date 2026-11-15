@@ -14,3 +14,11 @@ credentials.*
 
 # Downloaded telemetry payloads and their manifests
 data/
+
+# Codex agent state written into config/ (keys, database, logs, cache); never commit
+config/secret_key
+config/field_encryption_key
+config/codex.sqlite3*
+config/codex.toml
+config/logs/
+config/cache/
