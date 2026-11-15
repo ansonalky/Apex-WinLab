@@ -19,8 +19,8 @@ WITH scoped AS (
     AND (%(session_id)s::integer IS NULL OR m.session_id = %(session_id)s)
     AND (
       %(scoring)s = 'all'
-      OR (%(scoring)s = 'verified' AND tr.points_comparable)
-      OR (%(scoring)s = 'unverified' AND NOT tr.points_comparable)
+      OR (%(scoring)s = 'compatible' AND tr.points_comparable)
+      OR (%(scoring)s = 'not_compatible' AND NOT tr.points_comparable)
     )
 ),
 shared_names AS (
@@ -93,8 +93,8 @@ WHERE tr.roster_key = %(roster_key)s
   AND (%(session_id)s::integer IS NULL OR m.session_id = %(session_id)s)
   AND (
     %(scoring)s = 'all'
-    OR (%(scoring)s = 'verified' AND tr.points_comparable)
-    OR (%(scoring)s = 'unverified' AND NOT tr.points_comparable)
+    OR (%(scoring)s = 'compatible' AND tr.points_comparable)
+    OR (%(scoring)s = 'not_compatible' AND NOT tr.points_comparable)
   )
 ORDER BY m.session_id, tr.game_id
 """
@@ -111,8 +111,8 @@ WITH scoped AS (
     AND (%(session_id)s::integer IS NULL OR m.session_id = %(session_id)s)
     AND (
       %(scoring)s = 'all'
-      OR (%(scoring)s = 'verified' AND tr.points_comparable)
-      OR (%(scoring)s = 'unverified' AND NOT tr.points_comparable)
+      OR (%(scoring)s = 'compatible' AND tr.points_comparable)
+      OR (%(scoring)s = 'not_compatible' AND NOT tr.points_comparable)
     )
 )
 SELECT player_id,
@@ -141,8 +141,8 @@ WHERE pr.player_id = %(player_id)s
   AND (%(session_id)s::integer IS NULL OR m.session_id = %(session_id)s)
   AND (
     %(scoring)s = 'all'
-    OR (%(scoring)s = 'verified' AND tr.points_comparable)
-    OR (%(scoring)s = 'unverified' AND NOT tr.points_comparable)
+    OR (%(scoring)s = 'compatible' AND tr.points_comparable)
+    OR (%(scoring)s = 'not_compatible' AND NOT tr.points_comparable)
   )
 ORDER BY m.session_id, pr.game_id
 """
@@ -169,9 +169,9 @@ def scope_params(filters: dict, *, allow_points: bool, rank_by: str) -> dict:
         session = None
     else:
         session = int(session)
-    scoring = filters.get("scoring") or "verified"
-    if scoring not in ("verified", "unverified", "all"):
-        scoring = "verified"
+    scoring = filters.get("scoring") or "compatible"
+    if scoring not in ("compatible", "not_compatible", "all"):
+        scoring = "compatible"
     return {
         "squad_format": form,
         "map_name": filters.get("map_name") or None,
@@ -186,25 +186,26 @@ def scope_params(filters: dict, *, allow_points: bool, rank_by: str) -> dict:
 def ranking(filters: dict) -> tuple[bool, str, str]:
     """Whether average points may rank this filter, and the note to show."""
     form = filters.get("squad_format") or "trios"
-    scoring = filters.get("scoring") or "verified"
+    scoring = filters.get("scoring") or "compatible"
     if form in ("all", "", None):
         return False, "avg_placement", (
             "Squad formats are mixed, so teams are ranked by average placement. "
             "Average points are not combined across formats."
         )
-    if scoring == "verified":
+    if scoring == "compatible":
         return True, "avg_points", (
             "Ranked by average recorded score within this squad format. "
-            "On every included game the score equals the standard placement table plus one point per kill. "
-            "Kills are not added again."
+            "Every included game is compatible with this scoring scheme: each team's recorded score equals "
+            "the placement points in Methodology plus one point per kill. That match does not establish the event's "
+            "official rules. Kills are not added again."
         )
-    if scoring == "unverified":
+    if scoring == "not_compatible":
         return False, "avg_placement", (
-            "These games do not match a verified scoring table, so teams are ranked by average placement. "
+            "These games are not compatible with the placement + kill scheme, so teams are ranked by average placement. "
             "The recorded score is listed on each match and is not used as the rank."
         )
     return False, "avg_placement", (
-        "This view mixes games whose scoring rules were verified with games whose rules were not. "
+        "This view mixes games compatible with the placement + kill scheme and games that are not. "
         "Teams are ranked by average placement. Average points are not shown."
     )
 

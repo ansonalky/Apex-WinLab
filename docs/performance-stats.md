@@ -17,7 +17,7 @@ For each accepted game, `result_rows.py` reads `data/collection/cache/stats-{ses
 
 ## Scoring and format
 
-A game is `algs_placement_plus_kill` only when every team's score equals placement points (12, 9, 7, 5, 4, 3, 3, 2, 2, 2, 1 for 11th through 15th, then 0) plus one per kill. Average points use that recorded score and do not add kills again. Games that fail the check are ranked by average placement. Trios and duos stay separate unless the format filter is "all formats", which also ranks by placement.
+A game is `placement_plus_kill_compatible`, labeled "compatible with this scoring scheme", only when every team's recorded score equals placement points (12, 9, 7, 5, 4, 3, 3, 2, 2, 2, 1 for 11th through 15th, then 0) plus one per kill. Matching the observed scores does not establish an event's official rules, so the page never calls the formula official or verified. Average points use that recorded score and do not add kills again. Other games (`not_compatible`) are ranked by average placement. Trios and duos stay separate unless the format filter is "all formats", which also ranks by placement.
 
 Squad format is trios when the largest recorded squad in the game has 3 players, duos when it has 2, and solos when it has 1. A short squad in a trio game does not change the game's format; the row is flagged.
 

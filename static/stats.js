@@ -219,7 +219,7 @@ async function showTeam(row) {
     `Place ${match.placement == null ? "—" : match.placement}`,
     `kills ${match.kills == null ? "—" : match.kills}`,
     `damage ${match.damage == null ? "—" : match.damage}`,
-    match.points_comparable ? `points ${match.score}` : "score rules not verified",
+    match.points_comparable ? `points ${match.score}` : `score ${match.score == null ? "—" : match.score} (not compatible with the placement + kill scheme)`,
   ].join(" · "));
 }
 

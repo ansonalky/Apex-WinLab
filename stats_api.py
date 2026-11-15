@@ -15,7 +15,7 @@ def _filters() -> dict:
         "map_name": request.args.get("map") or None,
         "session_id": request.args.get("session") or None,
         "squad_format": request.args.get("format") or "trios",
-        "scoring": request.args.get("scoring") or "verified",
+        "scoring": request.args.get("scoring") or "compatible",
         "min_games": request.args.get("min_games") or 5,
     }
 

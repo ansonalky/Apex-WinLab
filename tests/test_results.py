@@ -15,7 +15,7 @@ DATA = Path(__file__).resolve().parents[1] / "data"
 CPR = "62978,127928,739030"
 
 
-def scoped(rows, squad_format="trios", scoring="verified", min_games=5, map_name=None, session_id=None):
+def scoped(rows, squad_format="trios", scoring="compatible", min_games=5, map_name=None, session_id=None):
     chosen = []
     for row in rows:
         if squad_format not in (None, "all") and row["squad_format"] != squad_format:
@@ -24,9 +24,9 @@ def scoped(rows, squad_format="trios", scoring="verified", min_games=5, map_name
             continue
         if session_id and row["session_id"] != session_id:
             continue
-        if scoring == "verified" and not row["points_comparable"]:
+        if scoring == "compatible" and not row["points_comparable"]:
             continue
-        if scoring == "unverified" and row["points_comparable"]:
+        if scoring == "not_compatible" and row["points_comparable"]:
             continue
         chosen.append(row)
     groups = defaultdict(list)
@@ -86,7 +86,7 @@ class ResultRowsTest(unittest.TestCase):
         self.assertEqual(sum(row["placement"] == 1 for row in rows), 0)
         self.assertEqual(sum(row["placement"] <= 5 for row in rows), 2)
 
-    def test_unverified_games_are_not_marked_comparable(self):
+    def test_incompatible_games_are_not_marked_comparable(self):
         by_game = defaultdict(list)
         for row in self.teams:
             by_game[row["game_id"]].append(row)
@@ -95,13 +95,13 @@ class ResultRowsTest(unittest.TestCase):
         self.assertFalse(game_is_comparable([]))
 
     def test_filters_recompute_inside_the_filtered_set(self):
-        verified = scoped(self.teams, "trios", "verified", 5)
-        duos = scoped(self.teams, "duos", "verified", 5)
-        one_map = scoped(self.teams, "trios", "verified", 1, map_name="mp_rr_desertlands_mu5")
-        self.assertIn(CPR, verified)
+        compatible = scoped(self.teams, "trios", "compatible", 5)
+        duos = scoped(self.teams, "duos", "compatible", 5)
+        one_map = scoped(self.teams, "trios", "compatible", 1, map_name="mp_rr_desertlands_mu5")
+        self.assertIn(CPR, compatible)
         self.assertEqual(duos, {})
         self.assertNotEqual(
-            sum(row["score"] for row in verified[CPR]) / len(verified[CPR]),
+            sum(row["score"] for row in compatible[CPR]) / len(compatible[CPR]),
             sum(row["score"] for row in one_map[CPR]) / len(one_map[CPR]),
         )
 
@@ -110,11 +110,11 @@ class ResultRowsTest(unittest.TestCase):
             self.assertNotIn("player_frames", statement)
             self.assertNotIn("score + kills", statement)
         self.assertIn("AVG(s.score)", TEAM_LEADERBOARD)
-        allow, rank, note = ranking({"squad_format": "trios", "scoring": "verified"})
+        allow, rank, note = ranking({"squad_format": "trios", "scoring": "compatible"})
         self.assertTrue(allow)
         self.assertEqual(rank, "avg_points")
         self.assertIn("not added", note)
-        allow, rank, _note = ranking({"squad_format": "all", "scoring": "verified"})
+        allow, rank, _note = ranking({"squad_format": "all", "scoring": "compatible"})
         self.assertFalse(allow)
         self.assertEqual(rank, "avg_placement")
 

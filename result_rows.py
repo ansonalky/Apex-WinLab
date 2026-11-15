@@ -15,11 +15,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# Placement points implied when score == this table + kills, for every team
-# in the game. Checked, not assumed, before a game is marked comparable.
-ALGS_PLACEMENT = {1: 12, 2: 9, 3: 7, 4: 5, 5: 4, 6: 3, 7: 3, 8: 2, 9: 2, 10: 2, 11: 1, 12: 1, 13: 1, 14: 1, 15: 1}
-SCORING_VERIFIED = "algs_placement_plus_kill"
-SCORING_UNVERIFIED = "unverified"
+# A game is compatible with this scoring scheme when every team's recorded
+# score equals these placement points plus one per kill. Matching recorded
+# scores does not establish an event's official rules, so the label says
+# "compatible", not "verified" or "official".
+PLACEMENT_POINTS = {1: 12, 2: 9, 3: 7, 4: 5, 5: 4, 6: 3, 7: 3, 8: 2, 9: 2, 10: 2, 11: 1, 12: 1, 13: 1, 14: 1, 15: 1}
+SCORING_COMPATIBLE = "placement_plus_kill_compatible"
+SCORING_NOT_COMPATIBLE = "not_compatible"
 
 
 def whole(value) -> int | None:
@@ -35,7 +37,7 @@ def whole(value) -> int | None:
 def placement_points(place: int | None) -> int | None:
     if place is None or place < 1:
         return None
-    return ALGS_PLACEMENT.get(place, 0)
+    return PLACEMENT_POINTS.get(place, 0)
 
 
 def squad_format(player_counts: list[int]) -> str:
@@ -107,7 +109,7 @@ def load_results(data_dir: Path) -> tuple[list[dict], list[dict]]:
         counts = [len(team.get("player_stats") or []) for team in listed]
         form = squad_format(counts)
         comparable = game_is_comparable(listed)
-        scoring = SCORING_VERIFIED if comparable else SCORING_UNVERIFIED
+        scoring = SCORING_COMPATIBLE if comparable else SCORING_NOT_COMPATIBLE
         seen_rosters: set[str] = set()
         seen_players: set[int] = set()
         for team in listed:

@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 from import_tiger import SCHEMA, connect, redact
-from result_rows import SCORING_VERIFIED, load_results
+from result_rows import SCORING_COMPATIBLE, load_results
 
 MARKER = "-- Final per-game results"
 
@@ -89,10 +89,10 @@ def replace_results(connection, teams: list[dict], players: list[dict]) -> None:
 
 def summarize(teams: list[dict], players: list[dict]) -> str:
     games = {row["game_id"] for row in teams}
-    verified = {row["game_id"] for row in teams if row["scoring_format"] == SCORING_VERIFIED}
+    compatible = {row["game_id"] for row in teams if row["scoring_format"] == SCORING_COMPATIBLE}
     return (
         f"team rows {len(teams)}, player rows {len(players)}, games {len(games)}, "
-        f"verified scoring {len(verified)}, unverified scoring {len(games - verified)}"
+        f"compatible with the placement + kill scheme {len(compatible)}, not compatible {len(games - compatible)}"
     )
 
 

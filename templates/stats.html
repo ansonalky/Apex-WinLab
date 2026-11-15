@@ -33,9 +33,9 @@
     </label>
     <label>Scoring
       <select id="scoring">
-        <option value="verified" selected>Verified: placement + 1 per kill</option>
+        <option value="compatible" selected>Compatible with placement + 1 per kill</option>
         <option value="all">All games, rank by placement</option>
-        <option value="unverified">Rules not verified</option>
+        <option value="not_compatible">Not compatible with that scheme</option>
       </select>
     </label>
     <label>Minimum games
@@ -61,7 +61,7 @@
     <summary>Methodology and identity</summary>
     <p>Team totals come from each game's final standings (<code>overall_stats</code>), not from summing replay frames. One row is stored per team per game. A replay <code>teamId</code> is match-local and is never used to merge teams.</p>
     <p>A roster is the set of Overstat <code>playerId</code>s on that team in that game. The same name with a different roster stays a separate row. A roster that was recorded under more than one name is flagged. Samples under five games are marked provisional.</p>
-    <p>Average points are shown only for games where every team's recorded score equals the placement table (12, 9, 7, 5, 4, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, then 0) plus one point per kill. Kills are not added on top of that score. Other games are ranked by average placement. Squad formats stay separate unless you choose all formats, which also ranks by placement.</p>
+    <p>Average points are shown only for games compatible with this scoring scheme: every team's recorded score equals the placement points (12, 9, 7, 5, 4, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, then 0) plus one point per kill. Matching the recorded scores does not establish the event's official rules. Kills are not added on top of that score. Other games are ranked by average placement. Squad formats stay separate unless you choose all formats, which also ranks by placement.</p>
     <p>Player kills, damage, and assists are that player's final line. Role and survival time change them. There is no skill rating.</p>
   </details>
   <script src="/static/stats.js"></script>

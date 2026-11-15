@@ -2,7 +2,7 @@
 
 ## Performance page (local import still required)
 
-Team and player results are extracted from cached standings, not from replay frames. `teamId` is match-local. Rosters are Overstat `playerId` sets. Average points are used only when every team in a game matches placement points plus one kill point. Otherwise the page ranks by average placement.
+Team and player results are extracted from cached standings, not from replay frames. `teamId` is match-local. Rosters are Overstat `playerId` sets. Average points are used only when a game is compatible with this scoring scheme: every team's recorded score matches placement points plus one per kill. That match does not establish the official rules. Otherwise the page ranks by average placement.
 
 This machine has no `DATABASE_URL`. Schema and queries are written. They have not been run against Tiger Data.
 
