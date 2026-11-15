@@ -3,12 +3,15 @@
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
 const PAN_MARGIN = 48;
+const HIT_RADIUS = 12;
+const CLICK_SLOP = 5;
 
 const camera = { zoom: 1, panX: 0, panY: 0, mapId: null };
 let lastView = null;
 let layout = null;
 let boundCanvas = null;
 let drag = null;
+let hits = [];
 
 window.ApexMap = {
   zoomRange: { min: ZOOM_MIN, max: ZOOM_MAX },
@@ -32,7 +35,8 @@ function draw(view) {
 
 function paint(view) {
   lastView = view;
-  const { canvas, ctx, frame, selectedTeam, colorFor, ring, mapConfig } = view;
+  hits = [];
+  const { canvas, ctx, frame, selectedTeam, colorFor, squadName, ring, mapConfig } = view;
   bind(canvas);
   const css = resizeBackingStore(canvas);
   ctx.setTransform(css.dpr, 0, 0, css.dpr, 0, 0);
@@ -77,6 +81,13 @@ function paint(view) {
   const points = (frame.players || []).filter((player) => player.x !== null && player.y !== null);
   for (const player of points) {
     const [px, py] = project(player.x, player.y);
+    hits.push({
+      x: px,
+      y: py,
+      teamId: String(player.teamId),
+      playerName: player.name || "Unnamed",
+      squadName: typeof squadName === "function" ? squadName(player.teamId) : "",
+    });
     const mine = String(player.teamId) === String(selectedTeam);
     ctx.globalAlpha = mine ? 1 : 0.45;
     ctx.fillStyle = colorFor(player.teamId);
@@ -125,7 +136,7 @@ function paint(view) {
     ctx.setLineDash([]);
     ctx.fillStyle = "#d4b8f0";
     ctx.font = "12px sans-serif";
-    ctx.fillText(marker.label, mx + 14, my + 22);
+    ctx.fillText(marker.label || "", mx + 14, my + 22);
     ctx.restore();
   }
   const hud = document.querySelector("#ring-status");
@@ -143,7 +154,8 @@ function bind(canvas) {
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
-  canvas.addEventListener("pointercancel", onPointerUp);
+  canvas.addEventListener("pointercancel", (event) => { drag = null; hideHover(event.currentTarget); });
+  canvas.addEventListener("pointerleave", (event) => { if (!drag) hideHover(event.currentTarget); });
   const host = canvas.parentElement;
   if (host && window.ResizeObserver) {
     new ResizeObserver(() => { if (lastView) draw(lastView); }).observe(host);
@@ -193,23 +205,48 @@ function onWheel(event) {
 
 function onPointerDown(event) {
   if (event.button !== 0 || !layout || !supportedView()) return;
-  drag = { x: event.clientX, y: event.clientY, panX: camera.panX, panY: camera.panY };
-  event.currentTarget.style.cursor = "grabbing";
+  drag = { x: event.clientX, y: event.clientY, panX: camera.panX, panY: camera.panY, moved: false };
   event.currentTarget.setPointerCapture(event.pointerId);
 }
 
 function onPointerMove(event) {
-  if (!drag) return;
-  camera.panX = drag.panX + (event.clientX - drag.x);
-  camera.panY = drag.panY + (event.clientY - drag.y);
+  const point = localPoint(event.currentTarget, event);
+  if (!drag) {
+    showHover(event.currentTarget, point, event.clientX, event.clientY);
+    return;
+  }
+  const dx = event.clientX - drag.x;
+  const dy = event.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < CLICK_SLOP) return;
+  drag.moved = true;
+  hideHover(event.currentTarget);
+  hideChoices(event.currentTarget);
+  event.currentTarget.style.cursor = "grabbing";
+  camera.panX = drag.panX + dx;
+  camera.panY = drag.panY + dy;
   if (layout) clampPan(layout.box, layout.width, layout.height);
   if (lastView) draw(lastView);
 }
 
 function onPointerUp(event) {
   if (!drag) return;
+  const wasClick = !drag.moved;
   drag = null;
-  event.currentTarget.style.cursor = "grab";
+  const point = localPoint(event.currentTarget, event);
+  if (!wasClick) {
+    event.currentTarget.style.cursor = "grab";
+    return;
+  }
+  const found = squadsAt(point.x, point.y);
+  if (found.length === 1 && typeof window.ApexMap.onSelect === "function") {
+    hideChoices(event.currentTarget);
+    window.ApexMap.onSelect(found[0].teamId);
+  } else if (found.length > 1) {
+    showChoices(event.currentTarget, event.clientX, event.clientY, found);
+  } else {
+    hideChoices(event.currentTarget);
+  }
+  showHover(event.currentTarget, point, event.clientX, event.clientY);
 }
 
 function zoomBy(factor) {
@@ -217,7 +254,81 @@ function zoomBy(factor) {
   zoomAt(layout.width / 2, layout.height / 2, camera.zoom * factor);
 }
 
+function squadsAt(cssX, cssY) {
+  const grouped = new Map();
+  for (const hit of hits) {
+    const dist = Math.hypot(hit.x - cssX, hit.y - cssY);
+    if (dist > HIT_RADIUS) continue;
+    const prev = grouped.get(hit.teamId);
+    if (!prev || dist < prev.dist) grouped.set(hit.teamId, { ...hit, dist });
+  }
+  return [...grouped.values()].sort((a, b) => a.dist - b.dist);
+}
+
+function showHover(canvas, point, clientX, clientY) {
+  const host = canvas.parentElement;
+  const found = squadsAt(point.x, point.y);
+  if (!host || !found.length) {
+    hideHover(canvas);
+    if (!drag) canvas.style.cursor = "grab";
+    return;
+  }
+  canvas.style.cursor = "pointer";
+  let tip = host.querySelector("[data-map-tip]");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.dataset.mapTip = "1";
+    tip.style.cssText = "position:absolute;z-index:3;pointer-events:none;background:#121418;color:#e7e9ee;border:1px solid #2c3340;border-radius:6px;padding:0.2rem 0.45rem;font:12px sans-serif;white-space:nowrap;";
+    host.append(tip);
+  }
+  const nearest = found[0];
+  const extra = found.length > 1 ? ` · ${found.length} squads` : "";
+  tip.textContent = `${nearest.playerName} · ${nearest.squadName || nearest.teamId}${extra}`;
+  const rect = host.getBoundingClientRect();
+  tip.style.left = `${clientX - rect.left + 12}px`;
+  tip.style.top = `${clientY - rect.top + 14}px`;
+}
+
+function hideHover(canvas) {
+  const tip = canvas.parentElement && canvas.parentElement.querySelector("[data-map-tip]");
+  if (tip) tip.remove();
+}
+
+function showChoices(canvas, clientX, clientY, options) {
+  const host = canvas.parentElement;
+  if (!host) return;
+  hideChoices(canvas);
+  const menu = document.createElement("div");
+  menu.dataset.mapChoice = "1";
+  menu.setAttribute("role", "menu");
+  menu.style.cssText = "position:absolute;z-index:4;background:#1b1f27;border:1px solid #2c3340;border-radius:6px;display:flex;flex-direction:column;min-width:8rem;padding:0.2rem;";
+  const rect = host.getBoundingClientRect();
+  menu.style.left = `${clientX - rect.left}px`;
+  menu.style.top = `${clientY - rect.top}px`;
+  for (const option of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.textContent = option.squadName || option.teamId;
+    button.style.cssText = "font:inherit;color:#e7e9ee;background:transparent;border:0;text-align:left;padding:0.25rem 0.45rem;cursor:pointer;";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideChoices(canvas);
+      if (typeof window.ApexMap.onSelect === "function") window.ApexMap.onSelect(option.teamId);
+    });
+    menu.append(button);
+  }
+  host.append(menu);
+}
+
+function hideChoices(canvas) {
+  const menu = canvas.parentElement && canvas.parentElement.querySelector("[data-map-choice]");
+  if (menu) menu.remove();
+}
+
 function zoomAt(cssX, cssY, nextZoom) {
+  if (boundCanvas) hideChoices(boundCanvas);
   const box = layout.box;
   const previous = camera.zoom;
   const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, nextZoom));

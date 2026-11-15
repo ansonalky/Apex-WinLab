@@ -257,6 +257,11 @@ function colorFor(teamId) {
   return squad ? squad.color : "#888";
 }
 
+function squadName(teamId) {
+  const squad = (summary.squads || []).find((item) => String(item.teamId) === String(teamId));
+  return squad ? squad.teamName : String(teamId);
+}
+
 // AI panels are optional: a failure there must never stop the replay.
 function safely(fn, fallback) {
   try {
@@ -277,6 +282,7 @@ function draw() {
     frame,
     selectedTeam: selectedTeam(),
     colorFor,
+    squadName,
     ring: currentRing,
     mapConfig,
   });
@@ -326,7 +332,7 @@ function probabilityTable(squads, valueKey, valueLabel, baselineKey) {
   const rows = [...squads]
     .sort((a, b) => b[valueKey] - a[valueKey])
     .map((squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
-        <td>${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</td>
+        <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</button></td>
         <td class="num">${pct(squad[valueKey])}</td>
         ${baselineKey ? `<td class="num">${pct(squad[baselineKey])}</td>` : ""}
       </tr>`).join("");
@@ -600,9 +606,9 @@ for (const box of [heldoutHighlights, finalHighlights]) {
   });
 }
 
-window.addEventListener("map-image", () => { if (frame) draw(); });
-matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => {
+// Map dots, probability tables, and the squad dropdown share this path.
+// It does not seek, reset the map camera, or request an AI review.
+function applySquadSelection() {
   loadHighlights();
   if (!frame) return;
   draw();
@@ -611,7 +617,43 @@ squadSelect.addEventListener("change", () => {
   loadTactical();
   if (window.Coach) safely(() => window.Coach.update());
   if (window.DecisionReview) safely(() => window.DecisionReview.update());
-});
+}
+
+let selectionScroll = null;
+
+function selectSquad(teamId) {
+  const id = String(teamId);
+  if (![...squadSelect.options].some((option) => option.value === id)) return;
+  const x = selectionScroll ? selectionScroll.x : window.scrollX;
+  const y = selectionScroll ? selectionScroll.y : window.scrollY;
+  selectionScroll = null;
+  const changed = squadSelect.value !== id;
+  squadSelect.value = id;
+  if (changed) applySquadSelection();
+  const restore = () => window.scrollTo(x, y);
+  restore();
+  requestAnimationFrame(restore);
+}
+
+window.ApexMap.onSelect = selectSquad;
+window.addEventListener("map-image", () => { if (frame) draw(); });
+matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
+squadSelect.addEventListener("change", applySquadSelection);
+for (const box of [heldoutBox, curveBox]) {
+  if (!box) continue;
+  box.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("button.squad-name");
+    if (!button || !box.contains(button)) return;
+    selectionScroll = { x: window.scrollX, y: window.scrollY };
+    if (event.pointerType !== "mouse") return;
+    event.preventDefault();
+  });
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button.squad-name");
+    if (!button || !box.contains(button)) return;
+    selectSquad(button.dataset.teamId);
+  });
+}
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
 // The AI review asks for the moment on screen when clicked, and seeks through
 // the same path as the highlights.
