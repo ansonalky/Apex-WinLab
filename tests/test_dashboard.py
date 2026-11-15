@@ -533,9 +533,11 @@ class HighlightApiTest(unittest.TestCase):
         self.assertEqual(first.get_json(), second.get_json())
         self.assertEqual(calls, [("held_out", 1), ("final_model_fitted", 2)])
         self.assertEqual(other.get_json()["kind"], "final_model_fitted")
-        self.assertIn(b"Largest changes in model estimate", page)
-        self.assertIn(b'id="highlights-heldout"', page)
-        self.assertIn(b'id="highlights-final"', page)
+        # Two key-moment carousels for the primary model; the other kind is in Model details.
+        self.assertIn(b"Key moments", page)
+        self.assertIn(b'id="moment-up"', page)
+        self.assertIn(b'id="moment-down"', page)
+        self.assertIn(b'id="alt-highlights"', page)
 
 
 if __name__ == "__main__":

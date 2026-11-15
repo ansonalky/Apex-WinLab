@@ -61,6 +61,37 @@ The demo opens on the first held-out test game.
 
 The plot is XY only; `z` is omitted. On a map version with a cached 2048 image, positions use the Overstat `mapCord` transform on that image and the current ring is drawn with the outside shaded (see `docs/map-rendering.md`). Any other map shows "Map background unavailable" and nothing is drawn on another map's image. The ring line names the slider time it is drawn at; prediction panels name their own, older checkpoint time.
 
+## Page layout
+
+The match page puts the map on the left and four cards on the right. The map column, `map_view.js`, the canvas and its controls are unchanged.
+
+| Card | Shows | On demand |
+| --- | --- | --- |
+| **Selected squad** | One row per player: status, HP and shields as `value/max`. Eliminated players keep the 0-with-maximum display | — |
+| **Win estimate** | One primary estimate, tagged *Experimental estimate*. It is held-out on a held-out test game, and otherwise the fitted model, tagged `fitted · in-sample`. Rank among squads still in contention, the contention baseline, and a clickable comparison table | ⓘ: provenance and limitations. Eliminated squads fold into one row |
+| **Key moments** | Two carousels, *Win estimate rose* and *Win estimate fell*, each with up to 3 detected highlights from the primary model. Each card shows the representative window (MM:SS–MM:SS) and one sentence built from the recorded knocks, revives, respawns and eliminations in that window. Events involving the highlighted squad come first. With no such event it reads "Win estimate changed; no matching event was identified." | *Details*: the window's exact change in percentage points, the full episode span (stated as not carrying the window's change), the model file, the server's event summary, and each event with a clickable time |
+| **AI Coach** | **Analyze this situation**, the review summary and its conditional recommendations. The decision review's recommendation, takeaway and retrospective attribution | Factors, evidence and uncertainty; weaknesses and alternatives; evidence packets; tactical measurements |
+
+Arrows change the displayed card only. They never seek, move the camera or call the AI. Clicking a card's time seeks with the same path as the slider. **Review decision** appears on *Win estimate fell* cards. Drawers that are re-rendered every second (`data-keep`) stay open while seeking.
+
+**Model details** is a dialog that opens over the page without changing the scroll position, slider, squad or camera. It holds:
+
+- the backend connection detail, game and session IDs, quality, the verified winner and replay timestamps;
+- the primary model's provenance (training counts, per-game log loss, file, full sha256), the full table with baseline column, the model inputs and the 30-second checkpoint history;
+- the alternate estimate and its key-moment list (with **Review decision**);
+- the full held-out evaluation table.
+
+**Formats** (`static/ui.js`):
+
+- times are MM:SS, with minutes allowed past 99;
+- probabilities are percentages with one decimal;
+- differences are in percentage points (`pp`);
+- Top-1 is a percentage;
+- quality has two decimals;
+- distances and heights are rounded and labelled "game units", because their scale is not verified;
+- missing values read "Unknown";
+- ring names use the shared ring label (see [tactical.md](tactical.md)).
+
 ## Data backends
 
 `--backend tiger` (or `auto` with imported matches) reads matches, squads, player frames, both prediction kinds, and the evaluation report from Tiger Data (`docs/tiger-data.md`). Not every component is database-backed:

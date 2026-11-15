@@ -44,12 +44,11 @@ window.DecisionReview = (() => {
 
   function episodeView() {
     const item = state.item;
-    const before = (100 * item.before).toFixed(1);
-    const after = (100 * item.after).toFixed(1);
-    return `<p><strong>${esc(item.squad_name || state.squadName)}</strong> · <span class="tag ${state.kind === "held_out" ? "heldout" : "fitted"}">${esc(kindName(state.kind))}</span> decrease ${Number(item.change_pp).toFixed(1)} percentage points</p>
+    const U = window.UI;
+    return `<p><strong>${esc(item.squad_name || state.squadName)}</strong> · <span class="tag ${state.kind === "held_out" ? "heldout" : "fitted"}">${esc(kindName(state.kind))}</span></p>
       <dl class="episode">
-        <dt>Representative window</dt><dd>${seekChip(item.start_elapsed, `${clock(item.start_elapsed)}–${clock(item.end_elapsed)}`)} ${item.window_s} s · estimate ${before}% → ${after}%</dd>
-        <dt>Full episode</dt><dd>${seekChip(item.episode_start_elapsed, `${clock(item.episode_start_elapsed)}–${clock(item.episode_end_elapsed)}`)} ${item.windows_merged} overlapping window${item.windows_merged === 1 ? "" : "s"}</dd>
+        <dt>Representative window</dt><dd>${seekChip(item.start_elapsed, U.span(item.start_elapsed, item.end_elapsed))} ${U.finite(item.window_s) ? `${item.window_s} s · ` : ""}estimate ${U.pct(item.before)} → ${U.pct(item.after)} (${U.pp(item.change_pp)})</dd>
+        <dt>Full episode</dt><dd>${seekChip(item.episode_start_elapsed, U.span(item.episode_start_elapsed, item.episode_end_elapsed))} ${U.text(item.windows_merged)} overlapping window${item.windows_merged === 1 ? "" : "s"}; the change above is for the representative window only</dd>
       </dl>
       ${state.kind !== "held_out" ? `<p class="when">This highlight comes from the final model, which was fitted on this match. Its estimates appear only in the retrospective part of the review.</p>` : ""}`;
   }
@@ -125,20 +124,20 @@ window.DecisionReview = (() => {
     }).join("");
     const attribution = a.drop_attribution || {};
     const missing = (a.missing_information || []).map((m) => `<li>${esc(m)}</li>`).join("");
+    const count = (a.options || []).length;
     return `<div class="stale-slot"></div>
-      <p><span class="tag ai">AI-generated · reviewable</span><strong>Decision review at ${esc(r.clock)}</strong> (replay t ${r.t}) · evidence ${esc(r.window.start_clock)}–${esc(r.window.end_clock)} · retrospective ${esc(p.retrospective.from_clock)}–${esc(p.retrospective.to_clock)}</p>
-      <p class="when">${esc(r.label || "")} ${esc(r.provider)} · ${esc(r.model)}${served} · effort ${esc(r.effort || "default")} · prompt ${esc(r.prompt_version)} · ${r.cached ? "from cache, " : ""}generated ${esc(r.generated_at || "")}.</p>
-      <span class="section-label">Estimate drop, retrospective (association, not cause)</span>
-      <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div>
-      <span class="section-label">Weaknesses at the decision time</span>
-      ${weaknesses}
-      <span class="section-label">Options compared (no win probability is given for unplayed options)</span>
-      ${options}
+      <p class="review-head"><span class="tag ai">AI-generated · reviewable</span><strong>Decision review at ${esc(r.clock)}</strong> <span class="when">· evidence ${esc(r.window.start_clock)}–${esc(r.window.end_clock)} · retrospective ${esc(p.retrospective.from_clock)}–${esc(p.retrospective.to_clock)}</span></p>
+      <p class="when small">${esc(r.label || "")} ${esc(r.provider)} · ${esc(r.model)}${served} · effort ${esc(r.effort || "default")} · prompt ${esc(r.prompt_version)} · ${r.cached ? "from cache, " : ""}generated ${esc(r.generated_at || "")}.</p>
       <span class="section-label">Recommendation (AI, conditional)</span>
       <ul class="recs"><li class="rec"><span class="tag">${esc(optionName(rec.choice))}</span>${rec.condition ? `<em>${esc(rec.condition)}</em> — ` : ""}${esc(rec.rationale)} ${chips(rec.evidence_ids, p)}</li></ul>
       <span class="section-label">Review or practice takeaway</span>
       <p>${esc(a.practice_takeaway)}</p>
-      ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+      <span class="section-label">Estimate drop, retrospective (association, not cause)</span>
+      <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div>
+      <details class="sub"><summary>Weaknesses at the decision time (${(a.weaknesses || []).length})</summary>${weaknesses}</details>
+      <details class="sub"><summary>Alternatives compared (${count}) · no win probability is given for unplayed options</summary>${options}
+        ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+      </details>
       ${packetView(p)}`;
   }
 
@@ -334,7 +333,7 @@ window.DecisionReview = (() => {
     result = null;
     lastRequest = null;
     updatePin();
-    if (box) box.innerHTML = `<p class="when">Choose “Review decision” under a decrease in the highlights to review the moment before it.</p>`;
+    if (box) box.innerHTML = `<p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p>`;
   }
 
   return { init, open, update, reset, markers };

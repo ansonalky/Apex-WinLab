@@ -121,3 +121,87 @@ button.evidence.retro { color: #c9c2d6; background: #24212b; border-style: dashe
 button.squad-name { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; text-align: left; cursor: pointer; }
 button.squad-name:hover, button.squad-name:focus-visible { color: #a0cbe8; text-decoration: underline; }
 table.probs tr.selected button.squad-name { font-weight: 600; }
+
+/* ---- Compact match page (header, right column, Model details). Nothing here
+   targets the map: the canvas, .layout and the map column keep their rules. ---- */
+.topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.topbar .nav { margin: 0; }
+.topbar #details-open { margin-left: auto; }
+.badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 99px; background: #2c3340; color: #b7beca; }
+.badge.tiger { background: #1f4a33; color: #8cd17d; }
+.badge.files { background: #4a3a1f; color: #ffbe7d; }
+.topbar + .controls { margin-top: 0.6rem; }
+#match-meta { margin: 0.4rem 0 0.6rem; font-size: 0.85rem; }
+#clock { font-variant-numeric: tabular-nums; }
+.small { font-size: 0.78rem; }
+
+.side { min-width: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.side .card { background: #1b1f27; border: 1px solid #2c3340; border-radius: 8px; padding: 0.6rem 0.75rem; }
+.side h2 { font-size: 0.95rem; margin: 0 0 0.4rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.side h2 .tag { margin: 0; }
+.side h2.with-action #coach-run { margin-left: auto; }
+.side h3 { font-size: 0.85rem; margin: 0.6rem 0 0.3rem; color: #b7beca; }
+.side p { margin: 0.3rem 0; }
+.tag.exp { background: #2c3340; color: #b7beca; font-weight: 400; }
+
+/* Roster: one row per player. */
+.roster { display: grid; gap: 0.25rem; }
+.player-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr); gap: 0.6rem; align-items: center; font-size: 0.85rem; }
+.player-row.out { color: #6b7380; }
+.player-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-status { color: #b7beca; font-size: 0.8rem; }
+.player-status.status-downed { color: #f0c674; }
+.meter { display: grid; grid-template-columns: auto 1fr auto; gap: 0.35rem; align-items: center; font-size: 0.75rem; color: #b7beca; font-variant-numeric: tabular-nums; }
+.meter .bar { margin: 0; }
+
+/* Win estimate. */
+.estimate-head { display: flex; align-items: center; gap: 0.75rem; }
+.estimate-value { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.estimate-text { flex: 1; min-width: 0; font-size: 0.85rem; }
+.estimate-text .tag { margin-right: 0.3rem; }
+table.probs.compact { margin-top: 0.4rem; font-size: 0.82rem; }
+table.probs.compact td { padding: 0.1rem 0.3rem; }
+details.info { position: relative; align-self: flex-start; }
+details.info > summary { list-style: none; cursor: pointer; width: 1.4rem; height: 1.4rem; line-height: 1.4rem; text-align: center; border-radius: 99px; border: 1px solid #2c3340; color: #a0cbe8; }
+details.info > summary::-webkit-details-marker { display: none; }
+details.info .info-body { position: absolute; right: 0; top: 1.8rem; z-index: 5; width: min(26rem, 80vw); background: #121418; border: 1px solid #4e79a7; border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.82rem; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
+details.sub { margin-top: 0.4rem; font-size: 0.85rem; }
+details.sub > summary { cursor: pointer; color: #b7beca; }
+
+/* Key moments: two carousels side by side. */
+.moments { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.6rem; }
+.carousel { background: #121418; border: 1px solid #2c3340; border-radius: 8px; padding: 0.5rem 0.6rem; min-width: 0; }
+.carousel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; font-size: 0.88rem; }
+.carousel-nav { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: #b7beca; font-variant-numeric: tabular-nums; }
+button.arrow { font: inherit; width: 1.6rem; height: 1.6rem; color: #e7e9ee; background: #1b1f27; border: 1px solid #2c3340; border-radius: 6px; cursor: pointer; }
+button.arrow:disabled { opacity: 0.35; cursor: default; }
+button.moment, div.moment { display: block; width: 100%; margin: 0.4rem 0 0; padding: 0.35rem 0.45rem; text-align: left; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; }
+button.moment { cursor: pointer; }
+button.moment:hover, button.moment:focus-visible { border-color: #4e79a7; }
+.moment-time { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+.moment-text { display: block; font-size: 0.85rem; color: #d3d7de; margin-top: 0.15rem; }
+.moment-actions { margin-top: 0.3rem; }
+.moment-actions:empty { display: none; }
+button.action.small { font-size: 0.78rem; padding: 0.15rem 0.5rem; }
+button.link { font: inherit; color: #a0cbe8; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; font-variant-numeric: tabular-nums; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.6rem; margin: 0.4rem 0; font-size: 0.8rem; }
+dl.facts dt { color: #8e97a6; }
+dl.facts dd { margin: 0; }
+ul.events { margin: 0.3rem 0; padding-left: 1.1rem; font-size: 0.8rem; }
+.list-moment { border-top: 1px solid #2c3340; padding-top: 0.3rem; margin-top: 0.4rem; }
+
+/* AI Coach. */
+.side .coach .review-head { margin: 0 0 0.15rem; }
+.side .coach .summary { margin: 0.2rem 0 0.4rem; }
+.factor-tags .tag { font-size: 0.7rem; margin: 0 0.2rem 0 0; }
+.side .decision-controls label { flex-direction: row; align-items: center; }
+
+/* Model details dialog. */
+dialog#model-details { width: min(64rem, 94vw); max-height: 88vh; padding: 0; color: #e7e9ee; background: #161a20; border: 1px solid #4e79a7; border-radius: 10px; }
+dialog#model-details::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog#model-details > header { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; background: #161a20; border-bottom: 1px solid #2c3340; z-index: 1; }
+dialog#model-details > header h2 { margin: 0; }
+dialog#model-details .dialog-body { padding: 0.4rem 1rem 1rem; }
+dialog#model-details section { border-bottom: 1px solid #2c3340; padding: 0.4rem 0 0.8rem; }
+dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
+.side .coach details > summary { font-size: 0.85rem; color: #b7beca; cursor: pointer; }

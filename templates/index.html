@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-  <header>
+  <header class="topbar">
     <h1>Apex WinLab</h1>
     <nav class="nav">
       <a href="/" aria-current="page">Match Explorer</a>
       <a href="/stats">Performance</a>
     </nav>
-    <p class="lede">One accepted match at a time. The map uses the Overstat transform when that map version has an image.</p>
-    <p id="backend" class="backend">Data backend: checking…</p>
+    <span id="backend" class="badge">Checking data…</span>
+    <button id="details-open" type="button" class="action quiet">Model details</button>
   </header>
   <section class="controls">
     <label>Match
@@ -23,43 +23,63 @@
     <label>Squad
       <select id="squad"></select>
     </label>
-    <label class="slider">Time since Playing started
+    <label class="slider">Match time
       <input id="time" type="range" min="0" max="0" value="0" step="1">
-      <span id="clock">00:00</span>
-      <span id="shown" class="when" aria-live="polite"></span>
+      <span><span id="clock">00:00</span><span id="shown" class="when" aria-live="polite"></span></span>
     </label>
     <p id="decision-pin" class="decision-pin" hidden></p>
   </section>
   <p id="outcome" class="outcome" hidden></p>
   <p id="match-meta" class="meta"></p>
-  <p id="coord-note" class="note"></p>
+  <p id="coord-note" class="note" hidden></p>
   <div class="layout">
     <div>
     <canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas>
     <p id="ring-status" class="meta"></p>
   </div>
-    <div>
-      <h2>Selected squad</h2>
-      <div id="roster"></div>
-      <h2>Held-out win probability</h2>
-      <div id="heldout" class="panel primary"></div>
-      <h2>Largest changes in model estimate <span class="tag heldout">held-out</span></h2>
-      <div id="highlights-heldout" class="panel primary highlights"><p class="when">Loading…</p></div>
-      <h2>Final model &middot; fitted on these games</h2>
-      <div id="curve" class="panel secondary"></div>
-      <h2>Largest changes in model estimate <span class="tag fitted">fitted on these games</span></h2>
-      <div id="highlights-final" class="panel secondary highlights"><p class="when">Loading…</p></div>
-      <h2>Held-out evaluation &middot; all test games</h2>
-      <div id="evaluation" class="panel"></div>
-      <h2 class="with-action">Tactical situation <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
-      <div id="tactical" class="panel"></div>
-      <h2>AI tactical review <span class="tag ai">AI-generated</span></h2>
-      <div id="coach" class="panel coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
-      <h2>Decision review <span class="tag ai">AI-generated</span></h2>
-      <div id="decision" class="panel coach" aria-live="polite"><p class="when">Choose “Review decision” under a decrease in the highlights to review the moment before it.</p></div>
+    <div class="side">
+      <section class="card">
+        <h2>Selected squad</h2>
+        <div id="roster"></div>
+      </section>
+      <section class="card">
+        <h2>Win estimate <span class="tag exp">Experimental estimate</span></h2>
+        <div id="estimate"><p class="when">Loading…</p></div>
+      </section>
+      <section class="card">
+        <h2>Key moments</h2>
+        <div class="moments">
+          <div id="moment-up" class="carousel"><p class="when">Loading…</p></div>
+          <div id="moment-down" class="carousel"><p class="when">Loading…</p></div>
+        </div>
+      </section>
+      <section class="card">
+        <h2 class="with-action">AI Coach <span class="tag ai">AI-generated</span> <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
+        <div id="coach" class="coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
+        <details class="sub" data-keep="tactical">
+          <summary>Tactical measurements <span class="when">(explanatory; not used by the model)</span></summary>
+          <div id="tactical"></div>
+        </details>
+        <h3>Decision review</h3>
+        <div id="decision" class="coach" aria-live="polite"><p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p></div>
+      </section>
     </div>
   </div>
+  <dialog id="model-details" aria-labelledby="model-details-title">
+    <header>
+      <h2 id="model-details-title">Model details</h2>
+      <button type="button" class="action quiet" data-close>Close</button>
+    </header>
+    <div class="dialog-body">
+      <section><h3>Data and match</h3><div id="backend-details"></div><div id="match-details"></div></section>
+      <section><h3>Primary estimate: provenance and inputs</h3><div id="provenance"></div></section>
+      <section><h3 id="alt-title">Alternate estimate</h3><div id="alt-estimate"></div></section>
+      <section><h3 id="alt-highlights-title">Alternate key moments</h3><div id="alt-highlights" class="highlights"></div></section>
+      <section><h3>Held-out evaluation · all test games</h3><div id="evaluation"></div></section>
+    </div>
+  </dialog>
   <script src="/static/map_view.js"></script>
+  <script src="/static/ui.js"></script>
   <script src="/static/tactical.js"></script>
   <script src="/static/coach.js"></script>
   <script src="/static/decision.js"></script>

@@ -15,7 +15,7 @@ window.Coach = (() => {
   let running = false;
 
   const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-  const clock = (s) => `${String(Math.floor(Math.max(0, s) / 60)).padStart(2, "0")}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
+  const clock = (s) => window.UI.mmss(s);
 
   function itemsById(packet) {
     return Object.fromEntries(((packet && packet.items) || []).map((item) => [item.id, item]));
@@ -48,8 +48,8 @@ window.Coach = (() => {
     const meta = r.provider_meta || {};
     const served = meta.served_model && meta.served_model !== r.model ? ` (served by ${esc(meta.served_model)})` : "";
     const source = r.cached ? `from cache, generated ${esc(r.generated_at || "")}` : `generated ${esc(r.generated_at || "")}${r.latency_s != null ? ` in ${r.latency_s} s` : ""}`;
-    return `<p><span class="tag ai">AI-generated · reviewable</span><strong>Review of ${esc(r.squad_name)} at ${esc(r.clock)}</strong> (replay t ${r.t}) · evidence window ${esc(r.window.start_clock)}–${esc(r.window.end_clock)}</p>
-      <p class="when">${esc(r.label || "")} ${esc(r.provider)} · ${esc(r.model)}${served} · effort ${esc(r.effort || "default")} · prompt ${esc(r.prompt_version)} · ${source}.</p>`;
+    return `<p class="review-head"><span class="tag ai">AI-generated · reviewable</span><strong>${esc(r.squad_name)} at ${esc(r.clock)}</strong> <span class="when">· evidence ${esc(r.window.start_clock)}–${esc(r.window.end_clock)}</span></p>
+      <p class="when small">${esc(r.label || "")} ${esc(r.provider)} · ${esc(r.model)}${served} · effort ${esc(r.effort || "default")} · prompt ${esc(r.prompt_version)} · ${source}.</p>`;
   }
 
   function factorCard(factor, items) {
@@ -68,16 +68,19 @@ window.Coach = (() => {
     const items = itemsById(r.packet);
     const recs = (a.recommendations || []).map((rec) => `<li class="rec"><span class="tag">${rec.type === "review_question" ? "review question" : "conditional"}</span>${rec.condition ? `<em>${esc(rec.condition)}</em> — ` : ""}${esc(rec.text)} ${chips(rec.evidence_ids, items)}</li>`).join("");
     const missing = (a.missing_information || []).map((m) => `<li>${esc(m)}</li>`).join("");
+    const factors = a.factors || [];
+    const tally = factors.map((f) => `<span class="tag ${esc(f.assessment)}">${esc(f.name)}</span>`).join("");
     return `<div class="stale-slot"></div>${heading(r)}
       <span class="section-label">Situation summary (AI)</span>
       <p class="summary">${esc(a.situation_summary)}</p>
-      <span class="section-label">Tactical factors</span>
-      ${(a.factors || []).map((f) => factorCard(f, items)).join("")}
       <span class="section-label">Recommendations and review questions (AI, conditional; not instructions)</span>
       <ul class="recs">${recs}</ul>
-      ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+      <details class="sub"><summary>Factors, evidence and uncertainty (${factors.length}) <span class="factor-tags">${tally}</span></summary>
+        ${factors.map((f) => factorCard(f, items)).join("")}
+        ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+      </details>
       ${packetDetails(r.packet)}
-      <p><button type="button" class="action quiet" data-coach="rerun">Analyze the current moment</button></p>`;
+      <p><button type="button" class="action quiet small" data-coach="rerun">Analyze the current moment</button></p>`;
   }
 
   function errorView(r, request) {

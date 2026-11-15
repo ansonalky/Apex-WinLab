@@ -7,9 +7,10 @@ window.Tactical = (() => {
   let token = 0;
 
   const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-  const clock = (s) => `${String(Math.floor(Math.max(0, s) / 60)).padStart(2, "0")}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
-  const units = (n) => (n == null ? "unknown" : `${Number(n).toLocaleString()} u`);
-  const signed = (n) => (n == null ? "unknown" : `${n > 0 ? "+" : ""}${Number(n).toLocaleString()} u`);
+  // Shared formats: MM:SS, and distances in unverified game units.
+  const clock = (s) => window.UI.mmss(s);
+  const units = (n) => window.UI.units(n);
+  const signed = (n) => window.UI.signedUnits(n);
 
   function teamName(squads, id) {
     const squad = (squads || []).find((item) => String(item.teamId) === String(id));
@@ -18,7 +19,7 @@ window.Tactical = (() => {
 
   function ringPart(ring) {
     if (!ring.known) {
-      const phase = { not_revealed: "no ring stage revealed yet", closing_target_unknown: "closing, end not recorded" }[ring.phase] || ring.phase || "unknown";
+      const phase = { not_revealed: "no ring has started closing yet", closing_target_unknown: "closing, end not recorded" }[ring.phase] || ring.phase || "Unknown";
       return `<p><strong>Ring:</strong> ${esc(phase)}${ring.label ? ` (${esc(ring.label)})` : ""}. Boundary distance not measured: ${esc(ring.reason || "geometry not revealed")}.</p>`;
     }
     if (ring.players_measured == null) {
@@ -38,7 +39,7 @@ window.Tactical = (() => {
       fire.from_other_environment ? `${fire.from_other_environment} other environment` : "",
       fire.from_own_squad ? `${fire.from_own_squad} from own squad` : "",
     ].filter(Boolean).join(", ");
-    const rows = fire.attackers.map((a) => `<li>${esc(a.team_name || teamName(squads, a.team))}: ${a.damage} damage in ${a.hits} hit${a.hits === 1 ? "" : "s"}, from ${a.sector || "unknown direction"}${a.bearing_deg != null ? ` (${a.bearing_deg}°)` : ""}, last ${a.seconds_ago}s ago</li>`).join("");
+    const rows = fire.attackers.map((a) => `<li>${esc(a.team_name || teamName(squads, a.team))}: ${a.damage} damage in ${a.hits} hit${a.hits === 1 ? "" : "s"}, from ${a.sector || "an unknown direction"}${a.bearing_deg != null ? ` (${a.bearing_deg}°)` : ""}, last ${a.seconds_ago}s ago</li>`).join("");
     return `<p><strong>Observed fire, last ${fire.window_s}s:</strong> ${fire.damage_taken} damage in ${fire.damage_events} events (${sources}); ${fire.attacking_squads} attacking squad${fire.attacking_squads === 1 ? "" : "s"}.</p>${rows ? `<ul>${rows}</ul>` : ""}`;
   }
 
@@ -77,13 +78,13 @@ window.Tactical = (() => {
       box.innerHTML = `<p class="unavailable">Not available: ${esc(data.reason || "")}</p>`;
       return;
     }
-    box.innerHTML = `<p><span class="tag">explanatory</span>Measured at ${clock(data.elapsed)} (replay t ${data.t}) for ${esc(teamName(squads, data.team))}. Not used by the model; the probabilities above do not include it.</p>
+    box.innerHTML = `<p class="when">Measured at ${clock(data.elapsed)} for ${esc(teamName(squads, data.team))}. Not used by the model; the estimate does not include it.</p>
       ${ringPart(data.ring)}
       ${firePart(data.fire, squads)}
       ${pressurePart(data.pressure, squads)}
       ${elevationPart(data.elevation)}
       ${qualityPart(data.quality)}
-      <details><summary>What these measurements do not show</summary><ul>${data.limits.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></details>`;
+      <details ${window.UI.keep("tactical-limits")}><summary>What these measurements do not show</summary><ul>${data.limits.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></details>`;
   }
 
   return { load };
