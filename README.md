@@ -113,4 +113,4 @@ The [submission verification record](docs/submission.md) identifies the audited 
 
 ## Demo video
 
-No demo-video URL is recorded in this repository yet. Add the final submission link when available; the written [demo guide](docs/demo.md) is available now.
+[Watch the Apex WinLab demo](https://youtu.be/3AhgQunru90). See also the written [demo guide](docs/demo.md).

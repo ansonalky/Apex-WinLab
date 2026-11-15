@@ -22,7 +22,7 @@ Separate local `refs/agents/.../checkpoints/...` refs retain agent state, includ
 ## Before merging/submitting
 
 - Provide judges the ignored replay/model/export artifacts and, for the full demo, access to an already-populated Tiger database through a private handoff. A public source checkout cannot reproduce those artifacts by itself.
-- Add the final demo-video URL when available; none was found in the tracked repository during preparation.
+- Demo video supplied by the owner: [Watch Apex WinLab](https://youtu.be/3AhgQunru90).
 - PR #4 had no reported CI checks at inspection. Local automated checks passed; rehearse the live demo on the intended submission machine and confirm its installed artifact paths. Older walkthrough sections may describe superseded controls; README describes the current committed action.
 - Confirm the final PR head contains the documentation preparation and remains the intended version. Merge is intentionally left to the owner.
-- No commits may be made after Sunday, November 15, 2026, noon Pacific (20:00 UTC). Check the actual time before any further commit; do not backdate commits.
+- The owner explicitly authorized the demo-video documentation commit after the original Sunday noon Pacific cutoff. Preserve its actual commit timestamp; do not backdate commits.
