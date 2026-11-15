@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-11-14T21:35:23+00:00",
+  "policy": "Frozen after the evaluation audit. Do not re-select l2, features, sessions, or baselines against these test games. A new evaluation needs new test sessions.",
+  "source_report_generated_at": "2026-11-14T21:22:19+00:00",
+  "method": "session_split",
+  "sessions": {
+    "train": [
+      23207,
+      23208,
+      23213,
+      23220,
+      23224,
+      23228,
+      23240,
+      23221,
+      23222,
+      23243,
+      23250,
+      23251,
+      23232,
+      23245
+    ],
+    "validation": [
+      23257,
+      23261,
+      23262,
+      23263
+    ],
+    "test": [
+      23047,
+      23237,
+      23233,
+      23234
+    ]
+  },
+  "games": {
+    "train": [
+      123349,
+      123350,
+      123351,
+      123356,
+      123359,
+      123362,
+      123377,
+      123418,
+      123421,
+      123425,
+      123433,
+      123436,
+      123439,
+      123457,
+      123466,
+      123467,
+      123468,
+      123471,
+      123472,
+      123476,
+      123479,
+      123482,
+      123483,
+      123489,
+      123491,
+      123500,
+      123509,
+      123511,
+      123515,
+      123524,
+      123530,
+      123546,
+      123552,
+      123556,
+      123558,
+      123559
+    ],
+    "validation": [
+      123570,
+      123575,
+      123576,
+      123579,
+      123585,
+      123610,
+      123611,
+      123618,
+      123631
+    ],
+    "test": [
+      123633,
+      123639,
+      123644,
+      123658,
+      123659,
+      123662
+    ]
+  },
+  "l2": 0.01,
+  "l2_selection": [
+    {
+      "l2": 0.01,
+      "validation_log_loss": 2.5197780202744813
+    },
+    {
+      "l2": 0.1,
+      "validation_log_loss": 2.5388218943509497
+    },
+    {
+      "l2": 1.0,
+      "validation_log_loss": 2.6168428779531703
+    }
+  ],
+  "features": [
+    "players_alive",
+    "players_downed",
+    "players_out",
+    "players_status_unknown",
+    "no_standing",
+    "hp_frac",
+    "hp_frac_missing",
+    "stale_pos_frac",
+    "center_dist_rel",
+    "center_dist_missing",
+    "spread_rel",
+    "spread_missing"
+  ],
+  "checkpoint_step_s": 30,
+  "optimizer": {
+    "method": "newton_armijo",
+    "tol": 1e-06,
+    "max_iter": 100
+  },
+  "data_sha256": {
+    "123349": "f00d86b2eafef27a39f154761c6d23258a49898c3f5f86c05b7124295ffd7102",
+    "123350": "4aec28dd8afeeba1975c6362cedcef457c0ca66b954b794eff3164ab8800ffc9",
+    "123351": "fce5c05097918e63a13c10bb62c0b66157184a9774482fd45b6f7456342dd582",
+    "123356": "af54c8a36b0796337b03d72eb5b9d458d14a15e9e683953ff1bc205844a62ee9",
+    "123359": "deca96bddf61d2a49521ddb7981facfe5054d558538b9f6b77b55dd061e5a3a3",
+    "123362": "2facf1d6523bcbf6a1a4f00de6157bed7812444ba274d4f2ff0c7941d7d11fbd",
+    "123377": "714a0b778ba914384e71989e884145ab5b81e5e46508e1587a489bfb51548cb3",
+    "123418": "8978b1ee81d0be784a234760fe26cc1427eb4865dfcdc4f14e6bacd276ccad36",
+    "123421": "56cb9b32786c79c79b9be29855f0e1b5c0c8af1013fc5abe766d3c6932118cd6",
+    "123425": "47dda310c36f36fd6ae7f1b38306c8f866d2c081e0fe8b7baad5eba0ff111671",
+    "123433": "7e3fdda4fd80704d853dab33366c2b441e3c7cf9d66198d04598ce24506e86c9",
+    "123436": "7828facb5314d2cfcadb6b927aa83dea233dfd6ae7d4a99395a79199ea998cc9",
+    "123439": "f3acca09520c08c3f7ab929302c11755ee237d3ca20ca4087fede40fa6c24b35",
+    "123457": "c0fd29c3a24f260202e4b28ae1f57713a813847520ae8360d7ccc8056f9b2c75",
+    "123466": "9b02324782422a12f679734ad8b9469618c3ec372b8eda3bbd33a1440d28ecfe",
+    "123467": "26c86324ca7dffa772df2dfb51e32db9613bbbaa9ecdcd022484725efca06f67",
+    "123468": "2683a7e5319feec451b1e846471fb173f3135802165da4bb974c71fb4a671a29",
+    "123471": "b2bbdad25edd840d3e7aab212f83cf18003db31f7eb95f3982fd7ee08a8b6082",
+    "123472": "b32239b82d42b41a6ceecf6829020e8a220b69ab4e6dcffceacfd51d65fa4157",
+    "123476": "4c0dd8cecb6c869c83dc428f0406db558c9eb3f7c5b52d0194e319d92a63422d",
+    "123479": "a6198ff6644d52033c523700689ed4f136f5968dc95afddf5f957d3a16e356bd",
+    "123482": "ef8fb3ee1a7e1870632640de31da9354796cdced60482324bb540618390576ab",
+    "123483": "5dd538968344983e7db64f5e93fb9f961422009b8d1f6309b4d06c24c34c3201",
+    "123489": "63cb52c1458d69b9986527956cdf4abfa356bcbdee054279a1e3bbda6bface54",
+    "123491": "269c288bf7e0a1b8e1179b75ede9b3598a86c341568c05ddcae9372830158072",
+    "123500": "6f484834b55cc0039c89347957cc6c5196238dc100c992627461b729c6e02fa0",
+    "123509": "e3ad306072da2e05706c1ba601d43ed666261ddfedaba8ef5e3eba5b2a88d1c3",
+    "123511": "faf9f552b784f5417fcac61e9822223915405217c0a1247652b9d3a33cbe4327",
+    "123515": "724adbfc9fa1125c8357febcbf2451e3e6435e92ee80b01237ab1fc57c120acf",
+    "123524": "ed80075c099b257793bde2180f72d8bc8147802c2399f71828a54e042a3701ce",
+    "123530": "cc03b291ced1c82fcaab6914185305f7c6519de3ed78f25f34607b71ff154746",
+    "123546": "f780f10607622b6c1b9ff57a8daef1f8b8c315813952b938135eabe866e65eb8",
+    "123552": "1d3b5187e7cc40a6f05415aacce9d0b1f540081b41bc75755d263510634ba458",
+    "123556": "015c203212c3a5fe932441523b7d5e34cf0fcb353f9b7208b9c929ac832e1169",
+    "123558": "969f0fbb1d0c03492ce8b6d8474a162850817ab77f73ff213a5ae35da3747d8d",
+    "123559": "4b3380320ef0316ee2013575d2e4a14d42b56c865461c03539ea544c24ba44e0",
+    "123570": "654590d017c51855662b054ca81304d12bdcbbd32cf5a1ff6c0755f09e153c15",
+    "123575": "3561783a009cd06ae5a8d428de51e4b5e1c2f53881608fbd658188c097fc6dc3",
+    "123576": "3aee315eaa1a430a985c982c52bb71cdb416a2d860bec14120cf544ad9915f06",
+    "123579": "04036469862ec04ee3d3294aa62fe68a5734a1f442d05f2c2ea6bf4e401c2c58",
+    "123585": "1f8bcffe2b7aa87bcf2b5614fb2d7e637789b0825d470b3eb63f3041f962d851",
+    "123610": "185ab1e7b7c80b7af9cef236c2c1ec2e18fa928f2979cd3d04f033ec17bb703e",
+    "123611": "bc4db6f03c2c9a4a570949864b557a3f7e8b331b2f9350097c9523063f4c52af",
+    "123618": "d4e93abe07b060b8c911c6001be71d865a3035d497a7d462d603f3e1a8b0f1c7",
+    "123631": "5b55f7ae3497b9e5dae0053142bb81456e592bc484d52cc1342bd9f7465900f2",
+    "123633": "6b9c44891567b358aa87c22a84439dd6d9a399f8c7c461445d3d950ef8eef590",
+    "123639": "c692185b66125df5f324e84a85d5bc3b3be17da7a9de5713fca3e6d078a6ddd6",
+    "123644": "e7a0e25bf035cb1184170dbe10b725a96eaddb35b13660c553dadf01d2c4cbdf",
+    "123658": "13437031d1a69a4712af8032d371fc853560e1fd065d43389da15b0669394af8",
+    "123659": "91fd6172f372fc5bb42da1f8d5506248e61681736e4e36444bf62899a27bdb6f",
+    "123662": "514c8d68b8fc16982a8cf3f5eee7d8729a456a67886968f05d991ac693b5d4db"
+  },
+  "test_metrics": {
+    "groups": 238,
+    "games": 6,
+    "game_weighted": {
+      "model": {
+        "log_loss": 2.344896834986068,
+        "brier": 0.8805033261000051,
+        "top1": 0.1473684210526316
+      },
+      "model_masked_diagnostic": {
+        "log_loss": 2.341419345673675,
+        "brier": 0.8803758192451547,
+        "top1": 0.1473684210526316
+      },
+      "uniform": {
+        "log_loss": 2.8500803484874795,
+        "brier": 0.9420149638802889,
+        "top1": 0.05798503611971104
+      },
+      "uniform_contention": {
+        "log_loss": 2.4191551896527272,
+        "brier": 0.8954197010384123,
+        "top1": 0.10458029896158766
+      },
+      "most_players": {
+        "log_loss": 2.6370041133443407,
+        "brier": 0.87598477128808,
+        "top1": 0.1257265382357294
+      }
+    },
+    "checkpoint_weighted": {
+      "model": {
+        "log_loss": 2.344272344071776,
+        "brier": 0.8804367055037624,
+        "top1": 0.14705882352941177
+      },
+      "model_masked_diagnostic": {
+        "log_loss": 2.3407972508513435,
+        "brier": 0.8803092016166101,
+        "top1": 0.14705882352941177
+      },
+      "uniform": {
+        "log_loss": 2.8502220880205154,
+        "brier": 0.9420220100424072,
+        "top1": 0.05797798995759294
+      },
+      "uniform_contention": {
+        "log_loss": 2.41904475917596,
+        "brier": 0.8954306196379265,
+        "top1": 0.1045693803620736
+      },
+      "most_players": {
+        "log_loss": 2.638964361270302,
+        "brier": 0.8758531919555153,
+        "top1": 0.12587249832059522
+      }
+    }
+  }
+}
