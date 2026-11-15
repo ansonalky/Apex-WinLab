@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import email.utils
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 from collect_matches import fetch_telemetry, search_url
@@ -141,6 +143,66 @@ class ResumeTest(unittest.TestCase):
             )
         self.assertEqual(fetched["download_status"], "cached")
         self.assertEqual(fetched["sha256"], __import__("hashlib").sha256(b"{}").hexdigest())
+
+
+class RateLimitTest(unittest.TestCase):
+    def test_retry_after_seconds_and_http_date(self):
+        from email.message import Message
+        from datetime import datetime, timedelta, timezone
+
+        from collect_matches import is_rate_limited, retry_after_seconds, TemporaryFailure
+
+        numeric = Message()
+        numeric["Retry-After"] = "120"
+        exc = urllib.error.HTTPError("https://overstat.gg/api/stats/1/overall", 429, "Too Many Requests", numeric, None)
+        self.assertEqual(retry_after_seconds(exc), 120.0)
+        missing = urllib.error.HTTPError("https://overstat.gg/api/stats/1/overall", 429, "Too Many Requests", Message(), None)
+        self.assertIsNone(retry_after_seconds(missing))
+        dated = Message()
+        when = datetime.now(timezone.utc) + timedelta(seconds=30)
+        dated["Retry-After"] = email.utils.format_datetime(when, usegmt=True)
+        dated_exc = urllib.error.HTTPError("https://overstat.gg/api/stats/1/overall", 429, "Too Many Requests", dated, None)
+        self.assertAlmostEqual(retry_after_seconds(dated_exc), 30, delta=2)
+        self.assertTrue(is_rate_limited(TemporaryFailure("https://overstat.gg/api/stats/1/overall: HTTP Error 429: Too Many Requests")))
+        self.assertFalse(is_rate_limited(TemporaryFailure("timed out")))
+
+    def test_429_honors_retry_after_once_then_stops(self):
+        from email.message import Message
+        from unittest import mock
+
+        from collect_matches import Client, TemporaryFailure
+
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append(request.full_url)
+            hdr = Message()
+            hdr["Retry-After"] = "0"
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", hdr, None)
+
+        client = Client(timeout=1, retries=6, sleep=lambda _seconds: None, delay=0)
+        with mock.patch("collect_matches.urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(TemporaryFailure):
+                client.get("https://overstat.gg/api/stats/1/overall")
+        self.assertEqual(len(calls), 2)
+
+    def test_429_without_retry_after_does_not_walk_retries(self):
+        from email.message import Message
+        from unittest import mock
+
+        from collect_matches import Client, TemporaryFailure
+
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", Message(), None)
+
+        client = Client(timeout=1, retries=6, sleep=lambda _seconds: None, delay=0)
+        with mock.patch("collect_matches.urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(TemporaryFailure):
+                client.get("https://overstat.gg/api/stats/1/overall")
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

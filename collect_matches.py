@@ -9,6 +9,7 @@ https://overstat.gg/tournament/octanecollegiate/23231.S5_Premier_Lobby1_Week_6/r
 from __future__ import annotations
 
 import argparse
+import email.utils
 import json
 import sys
 import time
@@ -44,6 +45,9 @@ TERMINAL = {
     "outcome_unknown",
     "duplicate",
     "accepted",
+    "map_not_preferred",
+    "session_cap",
+    "other_map_cap",
 }
 
 
@@ -71,7 +75,10 @@ class Client:
 
     def get(self, url: str) -> bytes:
         last: BaseException | None = None
-        for attempt in range(1, self.retries + 1):
+        attempt = 0
+        extra = 0
+        while attempt < self.retries + extra:
+            attempt += 1
             if self.budget is not None and self.used >= self.budget:
                 self.budget_hit = True
                 raise BudgetExceeded(f"request budget {self.budget} reached")
@@ -86,25 +93,56 @@ class Client:
                 if exc.code == 404 or exc.code == 410 or 400 <= exc.code < 500 and exc.code != 429:
                     raise Unavailable(f"HTTP {exc.code} {url}") from exc
                 last = exc
-                if attempt == self.retries:
+                if exc.code == 429:
+                    wait = retry_after_seconds(exc)
+                    # One wait when the server says how long, then stop. No further sessions.
+                    if wait is not None and extra == 0:
+                        extra = 1
+                        self.sleep(wait)
+                        continue
                     break
-                self.sleep(_delay(attempt, exc))
+                if attempt >= self.retries:
+                    break
+                self.sleep(min(2 ** (attempt - 1), 8))
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last = exc
-                if attempt == self.retries:
+                if attempt >= self.retries:
                     break
                 self.sleep(min(2 ** (attempt - 1), 8))
         raise TemporaryFailure(f"{url}: {last}")
 
 
+def retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
+    """Seconds from a Retry-After header. Missing or unreadable headers return None."""
+    if exc.headers is None:
+        return None
+    raw = exc.headers.get("Retry-After")
+    if raw is None or str(raw).strip() == "":
+        return None
+    text = str(raw).strip()
+    try:
+        seconds = float(text)
+    except ValueError:
+        parsed = email.utils.parsedate_to_datetime(text)
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        seconds = (parsed - datetime.now(timezone.utc)).total_seconds()
+    if seconds < 0:
+        return 0.0
+    return seconds
+
+
+def is_rate_limited(exc: BaseException) -> bool:
+    return isinstance(exc, TemporaryFailure) and "429" in str(exc)
+
+
 def _delay(attempt: int, exc: urllib.error.HTTPError) -> float:
-    if exc.code == 429 and exc.headers is not None:
-        retry_after = exc.headers.get("Retry-After")
-        if retry_after:
-            try:
-                return min(float(retry_after), 60.0)
-            except ValueError:
-                pass
+    if exc.code == 429:
+        wait = retry_after_seconds(exc)
+        if wait is not None:
+            return wait
     return min(2 ** (attempt - 1), 8)
 
 
@@ -542,6 +580,9 @@ def collect_catalog(
             except BudgetExceeded:
                 return finish("request_budget")
             except (TemporaryFailure, Unavailable) as exc:
+                if is_rate_limited(exc):
+                    stop_note = f"stopped on HTTP 429: {exc}"
+                    return finish("rate_limited")
                 stop_note = f"search stopped: {exc}"
                 return finish("search_failed")
             if not isinstance(page, dict) or not isinstance(page.get("data"), list):
@@ -571,6 +612,10 @@ def collect_catalog(
             except BudgetExceeded:
                 return finish("request_budget")
             except (TemporaryFailure, Unavailable, OSError, json.JSONDecodeError) as exc:
+                if is_rate_limited(exc):
+                    stop_note = f"stopped on HTTP 429: {exc}"
+                    save_manifest(data_dir, document)
+                    return finish("rate_limited")
                 print(f"session {session_id} skipped {exc}")
                 save_manifest(data_dir, document)
                 continue
@@ -611,6 +656,10 @@ def collect_catalog(
                 except BudgetExceeded:
                     save_manifest(data_dir, document)
                     return finish("request_budget")
+                if fetched.get("failure_class") == "temporary" and "429" in str(fetched.get("error")):
+                    stop_note = f"stopped on HTTP 429: {fetched.get('error')}"
+                    save_manifest(data_dir, document)
+                    return finish("rate_limited")
                 if before in (None, "not_attempted", "failed_temporary") and fetched.get("download_status") == "downloaded":
                     new_downloads += 1
                 _apply_result(record, fetched, minimum, data_dir)
@@ -687,7 +736,7 @@ def print_summary(records: list[dict], summary: dict) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect and validate Overstat games.")
-    parser.add_argument("command", choices=("preview", "trial", "resume", "run"))
+    parser.add_argument("command", choices=("preview", "trial", "resume", "run", "expand"))
     parser.add_argument("--session", type=int, default=None, help="Only this session. Omit to search public sessions.")
     parser.add_argument("--name", default="", help="Event-name search. Empty searches all public sessions.")
     parser.add_argument("--organizer", default="", help="Organizer filter passed to match search.")
@@ -700,6 +749,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--delay", type=float, default=0.25, help="Seconds between HTTP requests.")
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--frozen-dir", type=Path, default=None, help="Read-only original dataset. Required for expand.")
+    parser.add_argument("--target-total", type=int, default=200, help="Frozen accepted plus new unique accepted games.")
+    parser.add_argument("--max-per-session", type=int, default=2)
+    parser.add_argument("--max-per-day", type=int, default=8)
+    parser.add_argument("--max-examined-per-day", type=int, default=8)
+    parser.add_argument("--other-map-cap", type=int, default=40)
     return parser.parse_args(argv)
 
 
@@ -731,6 +786,28 @@ def _print_catalog(summary: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "expand":
+        from expand_collection import collect_expansion, print_expansion
+
+        if args.frozen_dir is None:
+            raise SystemExit("expand requires --frozen-dir, a different directory from --data-dir")
+        summary = collect_expansion(
+            args.data_dir,
+            args.frozen_dir,
+            min_quality=args.min_quality,
+            max_sessions=1000 if args.max_sessions is None else args.max_sessions,
+            accepted_target_total=args.target_total,
+            request_budget=args.request_budget,
+            delay=args.delay,
+            timeout=args.timeout,
+            retries=args.retries,
+            max_per_session=args.max_per_session,
+            max_per_day=args.max_per_day,
+            max_examined_per_day=args.max_examined_per_day,
+            other_map_cap=args.other_map_cap,
+        )
+        print_expansion(summary)
+        return 0
     if args.command == "preview":
         max_sessions = 10 if args.max_sessions is None else args.max_sessions
         max_downloads = 0 if args.max_downloads is None else args.max_downloads
