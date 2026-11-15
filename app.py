@@ -22,6 +22,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request
 
+from coach import Coach, build_packet
 from dashboard_data import MatchStore
 from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
@@ -85,6 +86,8 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     highlights = HighlightCache()
     # Explanatory tactical measurements from the local replay; not a model input.
     tactical = TacticalIndex(root)
+    # AI coach: runs only on request, from a packet of evidence up to the chosen second.
+    coach = Coach(root / "coach_cache")
 
     def highlight_error(game_id: int, kind: str, reason: str) -> dict:
         return {
@@ -185,6 +188,32 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         if not team:
             return jsonify({"error": "team is required"}), 400
         return jsonify(tactical.at(game_id, t, team))
+
+    def coach_packet(game_id: int, t: object, team: object) -> tuple[dict, int]:
+        try:
+            t = int(t)
+        except (TypeError, ValueError):
+            return {"status": "invalid", "reason": "t is required"}, 400
+        if not team:
+            return {"status": "invalid", "reason": "team is required"}, 400
+        return build_packet(store=store, live=live, tactical=tactical, game_id=game_id, t=t, team=team), 200
+
+    @app.get("/api/coach/status")
+    def coach_status():
+        return jsonify(coach.status())
+
+    @app.get("/api/matches/<int:game_id>/coach/packet")
+    def match_coach_packet(game_id: int):
+        built, code = coach_packet(game_id, request.args.get("t"), request.args.get("team"))
+        return jsonify(built), code
+
+    @app.post("/api/matches/<int:game_id>/coach")
+    def match_coach(game_id: int):
+        body = request.get_json(silent=True) or {}
+        built, code = coach_packet(game_id, body.get("t"), body.get("team"))
+        if built.get("status") != "ok":
+            return jsonify(built), code
+        return jsonify(coach.analyze(built["packet"]) | {"packet": built["packet"]})
 
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):

@@ -80,3 +80,30 @@ button.highlight { cursor: pointer; }
 button.highlight:hover,
 button.highlight:focus-visible { border-color: #4e79a7; }
 .highlight .line { display: block; margin-top: 0.2rem; }
+h2.with-action { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+button.action { font: inherit; font-size: 0.85rem; color: #e7e9ee; background: #1f3a57; border: 1px solid #4e79a7; border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }
+button.action:hover, button.action:focus-visible { background: #285077; }
+button.action:disabled { opacity: 0.6; cursor: default; }
+button.action.quiet { background: transparent; border-color: #2c3340; }
+.tag.ai { background: #3d2a57; color: #d4b8f0; }
+.coach { border-color: #6a4f8f; }
+.coach .stale { margin: 0 0 0.6rem; padding: 0.4rem 0.6rem; border-left: 3px solid #f0c674; background: #2a2618; font-size: 0.85rem; }
+.coach .stale.viewing { border-left-color: #a0cbe8; background: #1b2633; }
+.coach .summary { font-size: 0.95rem; margin: 0.5rem 0; }
+.coach .section-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #8e97a6; margin: 0.5rem 0 0.15rem; }
+.coach .factor { background: #121418; border: 1px solid #2c3340; border-radius: 8px; padding: 0.55rem 0.65rem; margin: 0.45rem 0; }
+.coach .factor header { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
+.coach .factor.advantage { border-left: 3px solid #8cd17d; }
+.coach .factor.disadvantage { border-left: 3px solid #e15759; }
+.coach .factor.uncertain { border-left: 3px solid #b7beca; }
+.coach .tag.advantage { background: #1f4a33; color: #8cd17d; }
+.coach .tag.disadvantage { background: #4a1f22; color: #ff9d9a; }
+.coach .facts ul, .coach ul.recs, .coach ul.missing { margin: 0.2rem 0; padding-left: 1.1rem; }
+.coach .interp p, .coach .uncert p { margin: 0.1rem 0; }
+.coach .interp { font-style: italic; }
+.coach .rec { border-left: 3px solid #4e79a7; padding-left: 0.5rem; margin: 0.3rem 0; list-style: none; }
+.coach ul.recs { padding-left: 0; }
+button.evidence { font: inherit; font-size: 0.72rem; color: #a0cbe8; background: #1b2633; border: 1px solid #2c3f57; border-radius: 99px; padding: 0 0.45rem; margin: 0 0.15rem; cursor: pointer; white-space: nowrap; }
+button.evidence:hover, button.evidence:focus-visible { border-color: #a0cbe8; }
+.coach pre { white-space: pre-wrap; word-break: break-word; font-size: 0.75rem; color: #b7beca; max-height: 14rem; overflow-y: auto; }
+.coach .packet-item { margin: 0.25rem 0; }

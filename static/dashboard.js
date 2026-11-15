@@ -104,6 +104,7 @@ async function loadMatch(gameId) {
   inFlight = null;
   pendingSeek = null;
   highlightToken += 1;
+  if (window.Coach) window.Coach.reset();
   heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
   finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
   timeInput.disabled = true;
@@ -205,6 +206,7 @@ async function loadFrame(elapsed) {
     draw();
     renderRoster();
     renderPredictions();
+    if (window.Coach) window.Coach.update();
   }
   if (pendingSeek !== null) {
     const latest = pendingSeek;
@@ -579,7 +581,22 @@ squadSelect.addEventListener("change", () => {
   renderRoster();
   renderPredictions();
   loadTactical();
+  if (window.Coach) window.Coach.update();
 });
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
+// The AI review asks for the moment on screen when clicked, and seeks through
+// the same path as the highlights.
+if (window.Coach) {
+  window.Coach.init({
+    context: () => (summary && frame ? {
+      game: summary.game_id,
+      t: frame.t,
+      elapsed: frame.elapsed,
+      team: selectedTeam(),
+      squadName: squadSelect.selectedOptions[0] ? squadSelect.selectedOptions[0].textContent : selectedTeam(),
+    } : null),
+    seek: seekHighlight,
+  });
+}
 loadBackend();
 loadMatches();

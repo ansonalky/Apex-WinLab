@@ -2,6 +2,8 @@
 
 `tactical.py` measures the selected squad's situation at one replay second, and the dashboard shows it under **Tactical situation**. It explains the state. It is **not a model input**: the frozen models, the per-second predictions and the evaluation do not use it, and no weight was changed. Whether these measurements capture the situations that matter is still to be reviewed before any model experiment.
 
+The **Analyze this situation** button sends these measurements, with recent events, to an LLM for a review on request; see [coach.md](coach.md).
+
 ## Source and timing
 
 - **One causal pass per match** over the local replay, with the dashboard's decoder (`apply_frame`, `export_players`). At second `t`, only state applied up to `t` is used.

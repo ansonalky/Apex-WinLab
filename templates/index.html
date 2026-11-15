@@ -50,12 +50,15 @@
       <div id="highlights-final" class="panel secondary highlights"><p class="when">Loading…</p></div>
       <h2>Held-out evaluation &middot; all test games</h2>
       <div id="evaluation" class="panel"></div>
-      <h2>Tactical situation</h2>
+      <h2 class="with-action">Tactical situation <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
       <div id="tactical" class="panel"></div>
+      <h2>AI tactical review <span class="tag ai">AI-generated</span></h2>
+      <div id="coach" class="panel coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
     </div>
   </div>
   <script src="/static/map_view.js"></script>
   <script src="/static/tactical.js"></script>
+  <script src="/static/coach.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

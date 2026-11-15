@@ -32,6 +32,7 @@ from dashboard_data import _raw_path, _record
 from features import STANDING
 from overstat_patch import apply_frame, export_players, frame_entries, initial_state
 from ring_features import live_entries, ring_at
+from turning_points import recorded_events
 
 CONTRACT_VERSION = 1
 # A coordinate updated more than this many seconds ago is stale.
@@ -161,7 +162,8 @@ class TacticalIndex:
                 "ring": ring_at(live_entries(state, observed), t),
                 "phase": state.get("state"),
             }
-        return {"playing_start": start, "seconds": seconds, "damage": damage}
+        # Feed events on the frame's replay clock, for the coach's recent-events window.
+        return {"playing_start": start, "seconds": seconds, "damage": damage, "events": recorded_events(series)}
 
     def game(self, game_id: int) -> dict | None:
         with self._lock:
