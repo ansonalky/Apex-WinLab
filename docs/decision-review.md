@@ -85,7 +85,7 @@ The request uses the structured output schema. Recommendation evidence enums lis
   - an HTTP 500 shown with Retry while seeking kept working.
 
   The layout of a full review and the map marker were checked with a page-local stub labelled "STUB UI TEST — not a model response".
-- **No real provider review has been produced.** `ANTHROPIC_API_KEY` is not set on this machine. Set it as described in [coach.md](coach.md), then check the first real response against these rules.
+- **Real Gemini review (`gemini-4-hydrogen`, 31 s):** the attribution was own-squad deterioration, citing only `R-*` and retrospective events. It compared regroup (destination `REF-MATE-2`), hold and disengage, and its options and recommendation cited only pre-decision evidence. It recommended a conditional regroup and gave a spacing takeaway. It passed every check.
 
 ## Limitations
 

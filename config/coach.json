@@ -1,8 +1,19 @@
 {
-  "provider": "anthropic",
-  "model": "claude-opus-5-5",
-  "effort": "medium",
-  "timeout_s": 90,
-  "max_tokens": 16000,
-  "fallbacks": "default"
+  "provider": "gemini",
+  "providers": {
+    "gemini": {
+      "model": "gemini-4-hydrogen",
+      "effort": "medium",
+      "timeout_s": 120,
+      "max_tokens": 16000,
+      "verified": "2026-11-14: listed by models.list for this key with generateContent; accepted both response_json_schema schemas; decision review 30 s at thinking level medium, 0 grounding problems."
+    },
+    "anthropic": {
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "timeout_s": 90,
+      "max_tokens": 16000,
+      "fallbacks": "default"
+    }
+  }
 }

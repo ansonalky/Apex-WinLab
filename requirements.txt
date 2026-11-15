@@ -3,5 +3,7 @@
 flask==3.1.2
 # Tiger Data import and the dashboard's database backend.
 psycopg[binary]==3.2.3
-# AI tactical coach (coach.py): official Anthropic SDK.
+# AI tactical coach (coach.py): Google GenAI SDK (default provider) and the
+# Anthropic SDK (optional provider).
+google-genai==3.3.0
 anthropic==2.8.0

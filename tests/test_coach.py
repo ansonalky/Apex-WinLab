@@ -164,6 +164,39 @@ class CoachFlow(unittest.TestCase):
             self.assertEqual(c.analyze(tiny_packet())["status"], "ok")
 
 
+class Providers(unittest.TestCase):
+    def test_gemini_is_the_default(self):
+        config = coach.load_config({})
+        self.assertEqual(config["provider"], "gemini")
+        self.assertTrue(config["model"])
+
+    def test_no_fallback_to_anthropic(self):
+        # An Anthropic key does not configure the Gemini provider.
+        status = coach.provider_status(coach.load_config({}), {"ANTHROPIC_API_KEY": "x"})
+        self.assertFalse(status["configured"])
+        self.assertTrue(any("GEMINI_API_KEY" in m for m in status["missing"]))
+        calls = []
+        result = Coach(call=lambda c, r: calls.append(1), env={"ANTHROPIC_API_KEY": "x"}).analyze(tiny_packet())
+        self.assertEqual((result["status"], result["provider"], calls), ("not_configured", "gemini", []))
+
+    def test_gemini_status_reports_name_not_value(self):
+        status = coach.provider_status(coach.load_config({}), {"GEMINI_API_KEY": "gem-secret"})
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["credential_source"], "GEMINI_API_KEY")
+        self.assertNotIn("gem-secret", json.dumps(status))
+
+    def test_unknown_provider_is_an_error_not_a_fallback(self):
+        with self.assertRaises(CoachError):
+            coach.call_provider({"provider": "other"}, {})
+
+    def test_cache_key_includes_provider_and_model(self):
+        c = Coach(env={})
+        base = {"provider": "gemini", "model": "m", "effort": "medium"}
+        keys = {c.cache_key(tiny_packet(), base), c.cache_key(tiny_packet(), base | {"provider": "anthropic"}),
+                c.cache_key(tiny_packet(), base | {"model": "n"})}
+        self.assertEqual(len(keys), 3)
+
+
 @unittest.skipUnless((DATA / "raw").is_dir(), "local replay data not present")
 class RealPackets(unittest.TestCase):
     @classmethod
@@ -223,6 +256,7 @@ class RealPackets(unittest.TestCase):
         from app import create_app
 
         app = create_app(DATA, store=self.deps["store"], info={"backend": "files"})
+        # Not configured whichever provider is the default.
         saved = {k: coach.os.environ.pop(k, None) for k in coach.CREDENTIAL_VARS}
         try:
             body = app.test_client().post(f"/api/matches/{GAME}/coach", json={"t": KNOCK_T, "team": TEAM}).json

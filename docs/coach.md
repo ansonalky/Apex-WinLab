@@ -8,25 +8,39 @@ Downward highlights also have a **Review decision** flow built on the same packe
 
 ## Configuration
 
-| Setting | Where | Default |
+The default provider is **Gemini**, through the official Google GenAI SDK (`google-genai`), with the output schema sent as `response_json_schema`. Anthropic is still implemented and can be selected explicitly. Only the configured provider is called. If it fails, the error is shown, and the coach never falls back to another provider.
+
+`config/coach.json` holds `provider` and a block per provider under `providers`. Environment variables override it:
+
+| Setting | Variable | Gemini default |
 | --- | --- | --- |
-| Provider | `config/coach.json` `provider`, or `COACH_PROVIDER` | `anthropic` (the only one implemented) |
-| Model | `config/coach.json` `model`, or `COACH_MODEL` | `claude-opus-5-5` |
-| Effort | `config/coach.json` `effort`, or `COACH_EFFORT` | `medium` |
-| Timeout | `config/coach.json` `timeout_s`, or `COACH_TIMEOUT_S` | 90 s, 1 SDK retry |
-| Refusal fallback | `config/coach.json` `fallbacks`, or `COACH_FALLBACKS=off` | `"default"` (server-side fallback beta `server-side-fallback-2026-07-01`) |
-| Key | `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) in the server's environment | none |
+| Provider | `COACH_PROVIDER` | `gemini` |
+| Model | `COACH_MODEL` | `gemini-4-hydrogen` |
+| Effort | `COACH_EFFORT` | `medium`, sent as Gemini `thinking_level` |
+| Timeout | `COACH_TIMEOUT_S` | 120 s |
+| Key | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), read by the SDK | none |
+
+The Anthropic block keeps `claude-opus-5-5`, `ANTHROPIC_API_KEY` and its server-side refusal fallback. That fallback is between Claude models only, not between providers.
 
 ```sh
 .venv/bin/pip install -r requirements.txt
-echo 'ANTHROPIC_API_KEY=...' >> .env      # .env is gitignored
-set -a; . ./.env; set +a
+set -a; . ./.env; set +a          # .env is gitignored; holds GEMINI_API_KEY and DATABASE_URL
 .venv/bin/python app.py --data-dir data --port 5050
 ```
 
-`GET /api/coach/status` reports the provider, the model, whether the coach is configured, and which variable supplies the credential. It reports the variable's name, never its value. Without a key, the panel shows a setup state, and a click shows the evidence packet that would be sent. No analysis is requested and none is shown.
+`GET /api/coach/status` reports the provider, the model, whether the coach is configured, and the *name* of the credential variable. Values are never printed or logged, and provider error text is redacted before it is shown. Results record `provider`, `model` and `provider_meta.served_model` (Gemini's `model_version`), and the cache key includes the provider and model.
 
-If you change the model to one that does not accept server-side fallbacks, set `"fallbacks": null`.
+### Model choice (2026-11-14)
+
+Candidates listed by `models.list` for this key with `generateContent` were tried on the real decision-review schema and packet (game 123633, 13:47):
+
+| Model | Result |
+| --- | --- |
+| `gemini-2.5-pro` | listed, but HTTP 404 for this key |
+| `gemini-3.8-flash` | HTTP 504 after about 148 s, twice |
+| `gemini-3.5-flash` | 16 s; one response rejected for asserting "share cover" |
+| `gemini-4-hydrogen`, default thinking | 68 s, about 10.5k thinking tokens |
+| `gemini-4-hydrogen`, `medium` | **30 s, 0 grounding problems, schema accepted (chosen)** |
 
 ## Routes
 
@@ -83,8 +97,20 @@ Validated results are cached in memory and in `data/coach_cache/` (gitignored). 
 
 The panel shows the analysed time, the evidence window, the provider and model (and the serving model if a fallback answered), whether the result came from the cache, and when it was generated. Evidence chips seek with the existing slider path. When the replay moves, the review keeps its own time and says so. Inside the evidence window it reads "viewing … inside this review's evidence window". Elsewhere it reads "not a review of the current moment". Loading never blocks seeking. There is a Cancel button and a client timeout of the server timeout plus 15 s. After an error, any earlier review is removed, and **Retry** re-runs the same second.
 
-## Verification status (2026-11-14)
+## Verification status
 
-- `tests/test_coach.py` covers a real knock (game 123633, team 11, t 924) and a quiet positional moment (t 760). Both packets pass the no-future check, have stable IDs, and carry no final-model probability. A request at the conclusion is refused. Fake responses exercise every validator rule and the cache rules.
-- Browser: the setup state, the packet view, evidence-chip seeking, stale and in-window labels, the error and retry state, and the refusal after the result were checked on the live page. The review layout was checked with a page-local stub that was labeled as one.
-- **No real provider response has been verified.** No `ANTHROPIC_API_KEY` was configured on this machine. The first real call should be checked: the response shape, the validator's rejection rate, and latency.
+**Real Gemini responses, 2026-11-14** (`gemini-4-hydrogen`, `medium`, game 123633, team 11). All passed the grounding checks, and every cited evidence ID exists.
+
+| Review | Moment | Latency | Tokens in / out / thinking |
+| --- | --- | --- | --- |
+| Engagement, situation review | 14:15, knock | 17.8 s | 6,951 / 1,548 / 2,287 |
+| Quiet, situation review | 11:31 | 28.2 s | 5,287 / 1,304 / 5,245 |
+| Decision review | 13:47 | 31.1 s | 11,578 / 1,972 / 5,201 |
+
+A repeat request was served from the cache. Earlier Anthropic-era checks, which still apply:
+
+- the packets pass the no-future check;
+- a request at the conclusion is refused;
+- fake responses exercise every validator rule.
+
+**Observed limitation:** the situation review has no cover/route wording check (the decision review does). One real quiet-moment recommendation said "hold cover" inside a sightline condition. Read recommendations as prompts to check the replay, not as terrain facts.

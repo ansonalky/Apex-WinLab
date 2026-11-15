@@ -435,7 +435,7 @@ def decision_schema(packet: dict) -> dict:
     }
 
 
-_HEDGE = re.compile(r"\b(if|whether|unknown|unverified|not|no|cannot|can't|may|might|could|verify|check|unclear|does not|doesn't)\b", re.I)
+_HEDGE = re.compile(r"\b(if|whether|unknown|unverified|without|lacks?|absent|not|no|cannot|can't|may|might|could|verify|check|unclear|does not|doesn't)\b", re.I)
 _FEATURE = re.compile(r"\b(cover|line of sight|sightlines?|buildings?|safe (route|path|rotation)|covered route)\b", re.I)
 _ALT_PROB = re.compile(r"%|\b(win(ning)? (probability|chance)|chance of winning|probability of winning)\b", re.I)
 

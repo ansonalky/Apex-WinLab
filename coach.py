@@ -14,12 +14,14 @@ Evidence packet
     on this match's own result. ``verify_packet`` checks this before any call.
 
 Provider
-    One provider, Anthropic, through the official ``anthropic`` SDK with a
-    JSON-schema structured output. Provider, model and effort come from
-    ``config/coach.json`` and may be overridden with ``COACH_PROVIDER``,
-    ``COACH_MODEL``, ``COACH_EFFORT`` and ``COACH_TIMEOUT_S``. The key is read
-    by the SDK from ``ANTHROPIC_API_KEY`` (or ``ANTHROPIC_AUTH_TOKEN``); only
-    its presence is ever reported.
+    Gemini by default, through the official Google GenAI SDK (``google-genai``)
+    with a JSON-schema response (``response_json_schema``). Anthropic remains
+    selectable with ``COACH_PROVIDER=anthropic``. Only the configured provider
+    is ever called; a failure is reported, never retried on another provider.
+    Settings come from ``config/coach.json`` (a block per provider) and may be
+    overridden with ``COACH_PROVIDER``, ``COACH_MODEL``, ``COACH_EFFORT`` and
+    ``COACH_TIMEOUT_S``. The SDK reads the key from ``GEMINI_API_KEY`` (or
+    ``ANTHROPIC_API_KEY`` for Anthropic); only its presence is ever reported.
 
 Output checks
     ``validate_analysis`` rejects a response that cites an evidence ID not in
@@ -52,8 +54,13 @@ CHANGE_OFFSETS_S = (30, 60)
 MAX_OPPONENTS = 6
 MAX_EVENTS = 20
 CONFIG_PATH = Path(__file__).with_name("config") / "coach.json"
-SUPPORTED_PROVIDERS = ("anthropic",)
-CREDENTIAL_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# One provider is used per request; there is no automatic fallback between them.
+PROVIDERS = {
+    "gemini": {"credentials": ("GEMINI_API_KEY", "GOOGLE_API_KEY"), "package": "google.genai", "pip": "google-genai"},
+    "anthropic": {"credentials": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"), "package": "anthropic", "pip": "anthropic"},
+}
+SUPPORTED_PROVIDERS = tuple(PROVIDERS)
+CREDENTIAL_VARS = tuple(name for spec in PROVIDERS.values() for name in spec["credentials"])
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Keys that would carry the result. None may appear anywhere in a packet.
 FORBIDDEN_KEYS = {
@@ -638,20 +645,24 @@ class CoachError(Exception):
 
 
 def load_config(env: dict | None = None) -> dict:
+    """Provider settings: ``config/coach.json`` (top-level ``provider`` and a block per
+    provider under ``providers``), overridden by ``COACH_*`` environment variables."""
     env = os.environ if env is None else env
     try:
         file = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         file = {}
-    timeout = env.get("COACH_TIMEOUT_S") or file.get("timeout_s") or 90
-    fallbacks = env.get("COACH_FALLBACKS", file.get("fallbacks"))
+    provider = env.get("COACH_PROVIDER") or file.get("provider")
+    block = (file.get("providers") or {}).get(provider) or {}
+    timeout = env.get("COACH_TIMEOUT_S") or block.get("timeout_s") or 90
+    fallbacks = env.get("COACH_FALLBACKS", block.get("fallbacks"))
     return {
-        "provider": env.get("COACH_PROVIDER") or file.get("provider"),
-        "model": env.get("COACH_MODEL") or file.get("model"),
-        "effort": env.get("COACH_EFFORT") or file.get("effort"),
+        "provider": provider,
+        "model": env.get("COACH_MODEL") or block.get("model"),
+        "effort": env.get("COACH_EFFORT") or block.get("effort"),
         "timeout_s": float(timeout),
         "fallbacks": None if fallbacks in (None, "", "off", "none") else fallbacks,
-        "max_tokens": int(file.get("max_tokens") or 16000),
+        "max_tokens": int(block.get("max_tokens") or 16000),
     }
 
 
@@ -659,17 +670,21 @@ def provider_status(config: dict, env: dict | None = None) -> dict:
     """Whether the coach can call its provider. Reports variable names, never values."""
     env = os.environ if env is None else env
     missing = []
-    if config["provider"] not in SUPPORTED_PROVIDERS:
+    spec = PROVIDERS.get(config["provider"])
+    credential = None
+    if spec is None:
         missing.append(f"provider must be one of {', '.join(SUPPORTED_PROVIDERS)} (set COACH_PROVIDER or config/coach.json)")
+    else:
+        credential = next((name for name in spec["credentials"] if (env.get(name) or "").strip()), None)
+        if credential is None:
+            missing.append(f"{spec['credentials'][0]} is not set in the server's environment")
+        try:
+            __import__(spec["package"])
+        except ImportError:
+            missing.append(f"the {spec['pip']} package is not installed (pip install -r requirements.txt)")
     if not config["model"]:
         missing.append("no model configured (set COACH_MODEL or config/coach.json)")
-    credential = next((name for name in CREDENTIAL_VARS if (env.get(name) or "").strip()), None)
-    if credential is None:
-        missing.append("ANTHROPIC_API_KEY is not set in the server's environment")
-    try:
-        import anthropic  # noqa: F401
-    except ImportError:
-        missing.append("the anthropic package is not installed (pip install -r requirements.txt)")
+    key_name = spec["credentials"][0] if spec else "the provider's API key"
     return {
         "provider": config["provider"],
         "model": config["model"],
@@ -680,9 +695,9 @@ def provider_status(config: dict, env: dict | None = None) -> dict:
         "credential_source": credential,
         "missing": missing,
         "setup": [
-            "Add ANTHROPIC_API_KEY=... to .env (gitignored).",
+            f"Add {key_name}=... to .env (gitignored).",
             "Load it and start the server: set -a; . ./.env; set +a; .venv/bin/python app.py --data-dir data",
-            "Optional: COACH_MODEL, COACH_EFFORT, COACH_TIMEOUT_S override config/coach.json.",
+            "Optional: COACH_PROVIDER, COACH_MODEL, COACH_TIMEOUT_S override config/coach.json.",
         ],
     }
 
@@ -767,6 +782,90 @@ def call_anthropic(config: dict, request: dict) -> tuple[dict, dict]:
         raise CoachError("provider", "The response was not valid JSON.", True)
 
 
+def _redact(text: str) -> str:
+    for name in CREDENTIAL_VARS:
+        value = os.environ.get(name)
+        if value:
+            text = text.replace(value, "[redacted]")
+    return text
+
+
+def call_gemini(config: dict, request: dict) -> tuple[dict, dict]:
+    """One ``generate_content`` call with a JSON-schema response (Google GenAI SDK).
+
+    The SDK reads ``GEMINI_API_KEY`` (or ``GOOGLE_API_KEY``) itself; the key is
+    never passed through this module or logged.
+    """
+    import httpx2 as httpx
+    from google import genai
+    from google.genai import errors, types
+
+    client = genai.Client(http_options=types.HttpOptions(timeout=int(config["timeout_s"] * 1000)))
+    generation = types.GenerateContentConfig(
+        system_instruction=request["system"],
+        response_mime_type="application/json",
+        response_json_schema=request["schema"],
+        max_output_tokens=config["max_tokens"],
+        # "effort" maps to Gemini's thinking level (minimal, low, medium, high); unset uses the model default.
+        thinking_config=types.ThinkingConfig(thinking_level=config["effort"].upper()) if config["effort"] else None,
+    )
+    try:
+        response = client.models.generate_content(model=config["model"], contents=request["user"], config=generation)
+    except errors.ClientError as exc:
+        message = _redact(str(exc.message or exc))[:300]
+        if exc.code in (401, 403):
+            raise CoachError("auth", "The provider rejected the API key or its permissions.", False)
+        if exc.code == 404:
+            raise CoachError("config", f"The provider does not recognise model {config['model']!r}.", False)
+        if exc.code == 429:
+            raise CoachError("rate_limit", "The provider is rate limiting requests or the quota is used up. Try again shortly.", True)
+        raise CoachError("config", f"The provider rejected the request (HTTP {exc.code}): {message}", False)
+    except errors.ServerError as exc:
+        raise CoachError("provider", f"Provider error (HTTP {exc.code}).", True)
+    except httpx.TimeoutException:
+        raise CoachError("timeout", f"The provider did not answer within {config['timeout_s']:.0f} s.", True)
+    except httpx.TransportError:
+        raise CoachError("network", "Could not reach the provider.", True)
+    usage = response.usage_metadata
+    candidate = (response.candidates or [None])[0]
+    finish = str(getattr(candidate, "finish_reason", None) or "").rsplit(".", 1)[-1] or None
+    meta = {
+        "served_model": response.model_version,
+        "request_id": response.response_id,
+        "stop_reason": finish,
+        "usage": {
+            "input_tokens": getattr(usage, "prompt_token_count", None),
+            "output_tokens": getattr(usage, "candidates_token_count", None),
+            "thinking_tokens": getattr(usage, "thoughts_token_count", None),
+        },
+    }
+    feedback = response.prompt_feedback
+    if feedback is not None and feedback.block_reason:
+        raise CoachError("refusal", f"The provider blocked the request ({feedback.block_reason}).", False)
+    if finish in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"):
+        raise CoachError("refusal", f"The provider stopped the response ({finish}).", False)
+    if finish == "MAX_TOKENS":
+        raise CoachError("truncated", "The response was cut off before it was complete.", True)
+    text = response.text
+    if not text:
+        raise CoachError("provider", "The response contained no text.", True)
+    try:
+        return json.loads(text), meta
+    except ValueError:
+        raise CoachError("provider", "The response was not valid JSON.", True)
+
+
+CALLS = {"gemini": call_gemini, "anthropic": call_anthropic}
+
+
+def call_provider(config: dict, request: dict) -> tuple[dict, dict]:
+    """Call the configured provider only. A failure is reported, never retried on another provider."""
+    call = CALLS.get(config["provider"])
+    if call is None:
+        raise CoachError("config", f"Unknown provider {config['provider']!r}.", False)
+    return call(config, request)
+
+
 class Coach:
     """Runs one analysis per request and caches validated results.
 
@@ -774,7 +873,7 @@ class Coach:
     version. Only validated analyses are cached; errors and rejections are not.
     """
 
-    def __init__(self, cache_dir: Path | None = None, call: Callable[[dict, dict], tuple[dict, dict]] = call_anthropic,
+    def __init__(self, cache_dir: Path | None = None, call: Callable[[dict, dict], tuple[dict, dict]] = call_provider,
                  env: dict | None = None):
         self.cache_dir = cache_dir
         self.call = call
