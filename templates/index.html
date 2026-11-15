@@ -13,32 +13,39 @@
       <a href="/" aria-current="page">Match Explorer</a>
       <a href="/stats">Performance</a>
     </nav>
-    <span id="backend" class="badge">Checking data…</span>
     <button id="details-open" type="button" class="action quiet">Model details</button>
   </header>
   <section class="controls">
-    <label>Match
+    <div class="field">
+      <span class="label-line">
+        <label for="match">Match</label>
+        <span class="help">
+          <button type="button" class="help-btn" aria-expanded="false" aria-describedby="tip-quality" aria-label="About match quality">?</button>
+          <span id="tip-quality" class="help-bubble" role="tooltip" hidden>Quality is the stored collection score. 7.0 is the save threshold: an imported replay is saved only at 7.0 or above when every acceptance check passes. Below 7.0, unknown quality, or a failed check stays a temporary preview. Higher scores are listed first, and missing scores last.</span>
+        </span>
+      </span>
       <select id="match"></select>
-    </label>
-    <form id="open-match" class="open-match">
-      <label>Open Overstat match
-        <input id="overstat-url" type="url" inputmode="url" placeholder="https://overstat.gg/…" autocomplete="off" spellcheck="false">
-      </label>
-      <button type="submit" class="action">Open</button>
-      <p id="open-status" class="when" hidden></p>
-      <div id="open-choices" hidden></div>
-    </form>
-    <label>Squad
+    </div>
+    <div class="field">
+      <label for="squad">Squad</label>
       <select id="squad"></select>
-    </label>
+    </div>
     <label class="slider">Match time
       <input id="time" type="range" min="0" max="0" value="0" step="1">
       <span><span id="clock">00:00</span><span id="shown" class="when" aria-live="polite"></span></span>
     </label>
+    <form id="open-match" class="open-match">
+      <label for="overstat-url">Overstat URL
+        <input id="overstat-url" type="url" inputmode="url" placeholder="https://overstat.gg/…" autocomplete="off" spellcheck="false">
+      </label>
+      <button type="submit" class="action">Open</button>
+    </form>
+    <p id="open-status" class="when open-feedback" hidden></p>
+    <div id="open-choices" class="open-feedback" hidden></div>
     <p id="decision-pin" class="decision-pin" hidden></p>
   </section>
   <p id="outcome" class="outcome" hidden></p>
-  <p id="match-meta" class="meta"></p>
+  <div id="match-meta" class="identity"></div>
   <p id="coord-note" class="note" hidden></p>
   <div class="layout">
     <div>
@@ -47,7 +54,7 @@
   </div>
     <div class="side">
       <section class="card">
-        <h2>Selected squad</h2>
+        <h2>Selected squad <span id="squad-tag"></span></h2>
         <div id="roster"></div>
       </section>
       <section class="card">

@@ -461,13 +461,22 @@ class BackendSelectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
             select_store(Path(tmp), "tiger", dsn="")
 
-    def test_backend_is_served_and_shown(self):
+    def test_backend_is_served_and_shown_in_model_details(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = create_app(Path(tmp), backend="files").test_client()
             info = client.get("/api/backend").get_json()
             page = client.get("/").data
         self.assertEqual(info["backend"], "files")
-        self.assertIn(b'id="backend"', page)
+        self.assertEqual(info["label"], "Local files")
+        self.assertIn("(requested)", info["detail"])
+        # The header badge is gone. Model details keeps the backend name and
+        # the connection detail; the page script fills that slot from /api/backend.
+        self.assertIn(b'id="model-details"', page)
+        self.assertIn(b'id="backend-details"', page)
+        self.assertNotIn(b'id="backend"', page.replace(b'id="backend-details"', b""))
+        script = (Path(__file__).resolve().parents[1] / "static" / "dashboard.js").read_bytes()
+        self.assertIn(b'querySelector("#backend-details")', script)
+        self.assertIn(b"Connection", script)
 
 
 def _demo_client():

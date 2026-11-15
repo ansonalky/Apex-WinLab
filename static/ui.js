@@ -31,5 +31,24 @@ window.UI = (() => {
   }, true);
   const keep = (key) => `data-keep="${esc(key)}"${openKeys.has(key) ? " open" : ""}`;
 
-  return { esc, finite, mmss, span, pct, pp, units, signedUnits, num, text, keep };
+  // A team name with its map color as a marker. The color comes from the
+  // match's teamId-to-color mapping (the map's colorFor); only hex colors are
+  // used, and the name stays plain text so color is never the only identifier.
+  const HEX = /^#[0-9a-f]{3,8}$/i;
+  function teamTag(name, color) {
+    const swatch = HEX.test(String(color || "")) ? color : "#888";
+    return `<span class="team-ref"><span class="team-swatch" style="background:${swatch}" aria-hidden="true"></span>${text(name)}</span>`;
+  }
+
+  // teamId -> {name, color} from a squads list ({teamId, teamName, color}).
+  function teamIndex(squads) {
+    const index = new Map();
+    for (const squad of squads || []) index.set(String(squad.teamId), { name: squad.teamName, color: squad.color });
+    return (teamId, fallbackName) => {
+      const found = index.get(String(teamId));
+      return teamTag(found ? found.name : fallbackName ?? `Team ${teamId}`, found && found.color);
+    };
+  }
+
+  return { esc, finite, mmss, span, pct, pp, units, signedUnits, num, text, keep, teamTag, teamIndex };
 })();

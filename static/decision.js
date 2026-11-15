@@ -55,7 +55,7 @@ window.DecisionReview = (() => {
       : state.kind === "new_match"
         ? `<p class="when">This highlight is a new-match prediction from the model trained on the original 51 games. It was not fitted on this match and is not a held-out evaluation.</p>`
         : "";
-    return `<p><strong>${esc(item.squad_name || state.squadName)}</strong> · <span class="tag ${tagClass}">${esc(kindName(state.kind))}</span></p>
+    return `<p><strong>${state.teamTag(state.team, item.squad_name || state.squadName)}</strong> · <span class="tag ${tagClass}">${esc(kindName(state.kind))}</span></p>
       <dl class="episode">
         <dt>Representative window</dt><dd>${seekChip(item.start_elapsed, U.span(item.start_elapsed, item.end_elapsed))} ${U.finite(item.window_s) ? `${item.window_s} s · ` : ""}estimate ${U.pct(item.before)} → ${U.pct(item.after)} (${U.pp(item.change_pp)})</dd>
         <dt>Full episode</dt><dd>${seekChip(item.episode_start_elapsed, U.span(item.episode_start_elapsed, item.episode_end_elapsed))} ${U.text(item.windows_merged)} overlapping window${item.windows_merged === 1 ? "" : "s"}; the change above is for the representative window only</dd>
@@ -143,7 +143,6 @@ window.DecisionReview = (() => {
       ? h.nextMove({
         action: `${esc(optionName(rec.choice))}${destination ? ` <span class="when">toward ${esc(destination)}; route not verified</span>` : ""}`,
         condition: esc(rec.condition || ""),
-        why: esc(h.firstSentence(h.withoutCondition(rec.rationale, rec.condition))),
       })
       : h.nextMove({ check: esc(rec.condition || (a.missing_information || [])[0] || h.firstSentence(rec.rationale)) });
     const usage = meta.usage || {};
@@ -158,15 +157,26 @@ window.DecisionReview = (() => {
       ["Cache", r.cached ? "from cache (same evidence, provider, model and prompt)" : "new response, now cached"],
       ["Tokens", usage.input_tokens != null ? `${esc(usage.input_tokens)} in · ${esc(usage.output_tokens)} out${usage.thinking_tokens != null ? ` · ${esc(usage.thinking_tokens)} thinking` : ""}` : "Unknown"],
     ];
+    // decision-v5 and later: the short validated sentence leads; earlier cached
+    // reviews keep their option block. Reasoning and alternatives are in Details.
+    const short = typeof a.next_action === "string" && a.next_action.trim();
+    const visible = short
+      ? `<div class="next-move${/^Insufficient information/i.test(short) ? " none" : ""}"><span class="section-label">Recommended action</span><p class="action">${esc(short)}</p></div>`
+      : move;
+    const why = rec.choice && rec.choice !== "abstain" ? esc(h.firstSentence(h.withoutCondition(rec.rationale, rec.condition))) : "";
     return `<div class="stale-slot"></div>
-      <p class="review-for"><strong>${esc(r.squad_name)}</strong> · decision reviewed at <strong>${esc(r.clock)}</strong></p>
-      ${move}
-      <p class="takeaway"><strong>Practice:</strong> ${esc(a.practice_takeaway)}</p>
-      <details class="sub"><summary>Why the estimate fell <span class="when">(retrospective; association, not cause)</span></summary>
-        <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div></details>
-      <details class="sub"><summary>Weaknesses at the decision time (${(a.weaknesses || []).length})</summary>${weaknesses}</details>
-      <details class="sub"><summary>Alternatives compared (${count}) · no win probability for unplayed options</summary>${options}
-        ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+      <p class="review-for">${state.teamTag(state.team, r.squad_name)} · decision reviewed at <strong>${esc(r.clock)}</strong></p>
+      ${visible}
+      <details class="sub"><summary>Details</summary>
+        ${short ? `<span class="section-label">Recommended option</span><p>${esc(optionName(rec.choice))}${destination ? ` <span class="when">toward ${esc(destination)}; route not verified</span>` : ""}${rec.condition ? ` — <em>${esc(rec.condition)}</em>` : ""}</p>` : ""}
+        ${why ? `<span class="section-label">Why</span><p>${why}</p>` : ""}
+        <span class="section-label">Practice</span><p>${esc(a.practice_takeaway)}</p>
+        <span class="section-label">Why the estimate fell <span class="when">(retrospective; association, not cause)</span></span>
+        <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div>
+        <details class="sub"><summary>Weaknesses at the decision time (${(a.weaknesses || []).length})</summary>${weaknesses}</details>
+        <details class="sub"><summary>Alternatives compared (${count}) · no win probability for unplayed options</summary>${options}
+          ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
+        </details>
       </details>
       <details class="sub"><summary>Review details</summary>
         <p class="when">${esc(r.label || "")}</p>
@@ -224,12 +234,21 @@ window.DecisionReview = (() => {
     const slot = box.querySelector(".stale-slot");
     const now = context();
     if (!slot || !now) return;
+    const notice = (text, explanation, viewing) =>
+      `<p class="stale tip${viewing ? " viewing" : ""}" tabindex="0" data-tip="${esc(explanation)}">${text}<span class="sr-only"> ${esc(explanation)}</span></p>`;
     if (String(now.team) !== String(state.team)) {
-      slot.innerHTML = `<p class="stale">This review is for ${esc(state.squadName)} at ${esc(result.clock)}; another squad is selected now.</p>`;
+      slot.innerHTML = notice(
+        `Review: ${state.teamTag(state.team, state.squadName)} ${esc(result.clock)} · Viewing: ${state.teamTag(now.team)} ${clock(now.elapsed)}`,
+        `This review is for ${state.squadName} at ${result.clock}. Another squad is selected now.`,
+      );
     } else if (now.t !== result.t) {
-      slot.innerHTML = now.t > result.t
-        ? `<p class="stale viewing">Viewing ${clock(now.elapsed)}, after the decision time ${esc(result.clock)}. The review's recommendations use only evidence up to ${esc(result.clock)}.</p>`
-        : `<p class="stale">This review is for ${esc(result.clock)}. The replay now shows ${clock(now.elapsed)}.</p>`;
+      slot.innerHTML = notice(
+        `Review: ${esc(result.clock)} · Viewing: ${clock(now.elapsed)}`,
+        now.t > result.t
+          ? `Viewing ${clock(now.elapsed)}, after the decision time ${result.clock}. The review's recommendations use only evidence up to ${result.clock}.`
+          : `This review is for ${result.clock}. The replay now shows ${clock(now.elapsed)}.`,
+        now.t > result.t,
+      );
     } else {
       slot.innerHTML = "";
     }
@@ -323,6 +342,8 @@ window.DecisionReview = (() => {
     state = {
       game: now.game, team: String(item.squad_id ?? now.team), squadName: item.squad_name || now.squadName,
       kind: item.prediction_kind, item, start: now.start, decisionElapsed: suggested, suggestedElapsed: suggested,
+      // This match's teamId -> name/color, kept with the review.
+      teamTag: window.UI.teamIndex(now.squads),
     };
     render(`<p class="when">Nothing has been requested. Adjust the decision time if needed, then click “Review decision”.</p>`);
     redraw();

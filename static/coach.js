@@ -18,6 +18,8 @@ window.Coach = (() => {
   let controller = null;
   let shownResult = null;
   let lastRequest = null;
+  // The reviewed match's teamId -> name/color, captured with the request.
+  let teams = { tag: (id, name) => window.UI.teamTag(name ?? `Team ${id}`), color: () => null };
   let running = false;
 
   const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -27,11 +29,21 @@ window.Coach = (() => {
     return Object.fromEntries(((packet && packet.items) || []).map((item) => [item.id, item]));
   }
 
+  function teamsFor(squads) {
+    const tag = window.UI.teamIndex(squads);
+    const colors = new Map((squads || []).map((squad) => [String(squad.teamId), squad.color]));
+    return { tag, color: (id) => colors.get(String(id)) || null };
+  }
+
   function chips(ids, items) {
     return (ids || []).map((id) => {
       const item = items[id];
       if (!item) return `<span class="unavailable">${esc(id)}?</span>`;
-      return `<button type="button" class="evidence" data-elapsed="${Number(item.elapsed)}" title="${esc(item.label)} · ${esc(item.clock)} — click to seek">${esc(id)} · ${esc(item.clock)}</button>`;
+      // An opposing squad's evidence carries that squad's map color.
+      const team = item.kind === "opponent" && item.data ? item.data.team : null;
+      const color = team != null && /^#[0-9a-f]{3,8}$/i.test(String(teams.color(team) || "")) ? teams.color(team) : null;
+      const swatch = color ? `<span class="team-swatch" style="background:${color}" aria-hidden="true"></span> ` : "";
+      return `<button type="button" class="evidence" data-elapsed="${Number(item.elapsed)}" title="${esc(item.label)} · ${esc(item.clock)} — click to seek">${swatch}${esc(id)} · ${esc(item.clock)}</button>`;
     }).join("");
   }
 
@@ -143,15 +155,25 @@ window.Coach = (() => {
     const factors = a.factors || [];
     const lead = recs.find((rec) => rec.type === "conditional_recommendation");
     const question = recs.find((rec) => rec.type === "review_question");
-    const move = lead
-      ? nextMove({ action: esc(withoutCondition(lead.text, lead.condition)), condition: esc(lead.condition || ""), why: whyFor(lead, factors) })
-      : nextMove({ check: question ? `${question.condition ? `${esc(question.condition)} — ` : ""}${esc(withoutCondition(question.text, question.condition))}` : esc((a.missing_information || [])[0] || "") });
-    const others = recs.filter((rec) => rec !== lead);
+    // coach-v4 and later: the short validated sentence. Earlier cached reviews
+    // have no next_action and keep their recommendation block.
+    const short = typeof a.next_action === "string" && a.next_action.trim();
+    const move = short
+      ? `<div class="next-move${/^Insufficient information/i.test(short) ? " none" : ""}"><span class="section-label">Recommended action</span><p class="action">${esc(short)}</p></div>`
+      : lead
+        ? nextMove({ action: esc(withoutCondition(lead.text, lead.condition)), condition: esc(lead.condition || "") })
+        : nextMove({ check: question ? `${question.condition ? `${esc(question.condition)} — ` : ""}${esc(withoutCondition(question.text, question.condition))}` : esc((a.missing_information || [])[0] || "") });
+    const why = lead ? whyFor(lead, factors) : "";
+    const others = short ? recs : recs.filter((rec) => rec !== lead);
     return `<div class="stale-slot"></div>
-      <p class="review-for"><strong>${esc(r.squad_name)}</strong> · reviewed at <strong>${esc(r.clock)}</strong></p>
+      <p class="review-for">${teams.tag(r.team, r.squad_name)} · reviewed at <strong>${esc(r.clock)}</strong></p>
       ${move}
-      <details class="sub"><summary>Situation summary</summary><p class="summary">${esc(a.situation_summary)}</p></details>
-      ${others.length ? `<details class="sub"><summary>Alternatives and review questions (${others.length})</summary><ul class="recs">${others.map(recLine).join("")}</ul></details>` : ""}`;
+      <details class="sub"><summary>Details</summary>
+        ${why ? `<span class="section-label">Why</span><p>${why}</p>` : ""}
+        <span class="section-label">Situation</span><p class="summary">${esc(a.situation_summary)}</p>
+        ${others.length ? `<span class="section-label">${short ? "Recommendations and review questions" : "Alternatives and review questions"}</span><ul class="recs">${others.map(recLine).join("")}</ul>` : ""}
+        <p class="when">Evidence, factors, uncertainty and provenance are in Review details.</p>
+      </details>`;
   }
 
   // Review details: metadata, then the evidence with clickable timestamps.
@@ -183,6 +205,11 @@ window.Coach = (() => {
   }
 
   // Label a review against what the replay shows now.
+  // A short notice; the full explanation shows on hover or keyboard focus.
+  function staleNotice(text, explanation, viewing) {
+    return `<p class="stale tip${viewing ? " viewing" : ""}" tabindex="0" data-tip="${esc(explanation)}">${text}<span class="sr-only"> ${esc(explanation)}</span></p>`;
+  }
+
   function update() {
     if (!shownResult || !box) return;
     const slot = box.querySelector(".stale-slot");
@@ -190,16 +217,23 @@ window.Coach = (() => {
     const now = context();
     const r = shownResult;
     if (!now || String(now.game) !== String(r.game_id)) {
-      slot.innerHTML = `<p class="stale">This review is for another match.</p>`;
+      slot.innerHTML = staleNotice("Review: another match", "This review is for another match; it does not describe what is shown.");
       return;
     }
     if (String(now.team) !== String(r.team)) {
-      slot.innerHTML = `<p class="stale">This review is for ${esc(r.squad_name)} at ${esc(r.clock)}. The replay now shows another squad; it is not a review of the current selection.</p>`;
+      slot.innerHTML = staleNotice(
+        `Review: ${teams.tag(r.team, r.squad_name)} ${esc(r.clock)} · Viewing: ${teams.tag(now.team)} ${clock(now.elapsed)}`,
+        `This review is for ${r.squad_name} at ${r.clock}. Another squad is selected now, so it does not review the current selection.`,
+      );
     } else if (now.t !== r.t) {
       const inWindow = now.t >= r.window.start_t && now.t < r.t;
-      slot.innerHTML = inWindow
-        ? `<p class="stale viewing">Viewing ${clock(now.elapsed)}, inside this review's evidence window. The review is for ${esc(r.clock)}.</p>`
-        : `<p class="stale">This review is for ${esc(r.clock)}. The replay now shows ${clock(now.elapsed)}; it is not a review of the current moment.</p>`;
+      slot.innerHTML = staleNotice(
+        `Review: ${esc(r.clock)} · Viewing: ${clock(now.elapsed)}`,
+        inWindow
+          ? `Viewing ${clock(now.elapsed)}, inside this review's evidence window. The review is for ${r.clock}.`
+          : `This review is for ${r.clock}. The replay now shows ${clock(now.elapsed)}, so it is not a review of the current moment.`,
+        inWindow,
+      );
     } else {
       slot.innerHTML = "";
     }
@@ -208,6 +242,7 @@ window.Coach = (() => {
   async function run(request) {
     if (!box || !request) return;
     lastRequest = request;
+    teams = teamsFor(request.squads);
     const mine = ++token;
     if (controller) controller.abort();
     controller = new AbortController();
@@ -316,5 +351,5 @@ window.Coach = (() => {
     if (box) loadStatus();
   }
 
-  return { init, update, reset, helpers: { esc, clock, chips, itemsById, withoutCondition, firstSentence, nextMove } };
+  return { init, update, reset, helpers: { esc, clock, chips, itemsById, withoutCondition, firstSentence, nextMove, teamsFor } };
 })();

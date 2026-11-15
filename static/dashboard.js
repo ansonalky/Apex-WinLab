@@ -50,17 +50,12 @@ async function getJSON(url, options) {
   return response.json();
 }
 
-// A small badge on the page; the connection detail is in Model details.
+// Connection detail is shown in Model details, not in the header.
 async function loadBackend() {
-  const box = document.querySelector("#backend");
   try {
     backendInfo = await (await fetch("/api/backend")).json();
-    box.className = `badge ${backendInfo.backend === "tiger" ? "tiger" : "files"}`;
-    box.textContent = backendInfo.backend === "tiger" ? "Tiger Data" : "Local files";
-    box.title = `${backendInfo.label || backendInfo.backend}: ${backendInfo.detail || ""}`;
   } catch (error) {
-    box.className = "badge";
-    box.textContent = "Data source unknown";
+    backendInfo = null;
   }
 }
 
@@ -89,9 +84,8 @@ async function loadMatches(preferId) {
     const option = document.createElement("option");
     option.value = match.game_id;
     // Expansion games are never held-out and never in a frozen split.
-    const expansion = match.collection && match.collection !== "original";
-    const tag = match.heldout ? "[held-out test] " : match.collection === "user-import" ? "[imported] " : expansion ? "[expansion] " : "";
-    option.textContent = `${tag}${match.event || "Untitled"} · ${match.map_name || "map unknown"} · quality ${num(match.quality_score, 2)}`;
+    option.dataset.listed = "1";
+    option.textContent = matchOptionLabel(match);
     matchSelect.append(option);
   }
   // Sorting does not change the game already on screen. A link from Performance
@@ -132,6 +126,101 @@ function kindLabel(kind) {
   return "Fitted model (in-sample: trained on this match)";
 }
 
+// Verified Overstat short names (static/map_names.json, copied from map_config.SHORT_NAMES).
+const MAP_NAMES = {};
+
+function readableMap(id) {
+  if (id == null || id === "") return "Unknown map";
+  if (Object.prototype.hasOwnProperty.call(MAP_NAMES, id)) return MAP_NAMES[id];
+  if (/^(mp_|draft_|kc_)/.test(id) || String(id).includes("_")) return "Unknown map";
+  return String(id);
+}
+
+function matchOptionLabel(match) {
+  const heldoutFlag = match.heldout === true || (match.heldout && match.heldout.available === true);
+  const collection = match.collection;
+  const expansion = collection && collection !== "original" && collection !== "preview";
+  const tag = heldoutFlag ? "[held-out] " : collection === "user-import" ? "[imported] " : expansion ? "[expansion] " : "";
+  return `${tag}${match.event || "Untitled"} · ${readableMap(match.map_name)} · quality ${num(match.quality_score, 2)}`;
+}
+
+function isPreview(match) {
+  const info = (match && match.inference) || {};
+  return info.storage === "preview" || match.storage === "preview" || match.collection === "preview";
+}
+
+function previewCopy(match) {
+  const reason = match.acceptance_reason || match.reason;
+  const score = qualityValue(match);
+  if (reason === "below_quality_threshold" || (reason == null && score !== null && score < 7)) {
+    return "Available for 24 hours. Not saved because quality is below 7.0.";
+  }
+  if (reason === "quality_unknown" || (reason == null && score === null)) {
+    return "Available for 24 hours. Not saved because quality is unknown.";
+  }
+  if (reason === "outcome_unknown") {
+    return "Available for 24 hours. Not saved because the winner is not verified.";
+  }
+  return "Available for 24 hours. Not saved because an acceptance check failed.";
+}
+
+function predictionBadge(kind) {
+  if (kind === HELD_OUT && heldout && heldout.available) return { text: "Held-out", className: "heldout" };
+  if (kind === NEW_MATCH) return { text: "New match", className: "newmatch" };
+  const role = summary && summary.inference && summary.inference.role;
+  if (kind === FINAL && role !== "unavailable" && role !== "new_match") return { text: "Fitted", className: "fitted" };
+  return null;
+}
+
+function predictionCopy(kind) {
+  const info = (summary && summary.inference) || {};
+  if (kind === HELD_OUT) {
+    return "This game is in the frozen held-out test split. The estimate uses the evaluation model fit on the other sessions, not on this game.";
+  }
+  if (kind === NEW_MATCH) {
+    let text = info.membership === "verified_unseen"
+      ? "This replay is not one of the games the saved model was trained on. The estimate is a forward pass of that model. It is not a held-out evaluation and was not fitted on this game."
+      : (info.reason || "Training membership cannot be verified for this replay.");
+    if (info.membership !== "verified_unseen" && !/independent evidence/i.test(text)) {
+      text += " The estimate is not used as independent evidence.";
+    }
+    if (info.storage === "preview") text += " Performance on low-quality preview matches has not been established.";
+    return text;
+  }
+  return "This game was part of the model’s training. The estimate is in-sample, not a held-out evaluation, and is not independent evidence.";
+}
+
+function helpHtml(id, label, text) {
+  return `<span class="help"><button type="button" class="help-btn" aria-expanded="false" aria-describedby="${esc(id)}" aria-label="${esc(label)}">?</button><span id="${esc(id)}" class="help-bubble" role="tooltip" hidden>${esc(text)}</span></span>`;
+}
+
+function renderIdentity() {
+  if (!summary) return;
+  const preview = isPreview(summary);
+  const badge = predictionBadge(primaryKind());
+  const status = preview
+    ? `<span class="badge preview">Temporary preview</span>${helpHtml("tip-status", "About temporary preview", previewCopy(summary))}`
+    : `<span class="badge saved">Saved</span>`;
+  const prediction = badge
+    ? `<span class="badge ${badge.className}">${esc(badge.text)}</span>${helpHtml("tip-prediction", "About this prediction", predictionCopy(primaryKind()))}`
+    : "";
+  meta.innerHTML = `<span class="identity-event">${textOrUnknown(summary.event)}</span><span class="identity-map">${esc(readableMap(summary.map_name))}</span><span class="identity-status">${status}</span><span class="identity-pred">${prediction}</span>`;
+}
+
+function syncUnlistedOption() {
+  const option = [...matchSelect.options].find((item) => item.value === String(summary.game_id));
+  if (!option || option.dataset.listed === "1") return;
+  option.textContent = matchOptionLabel(summary);
+}
+
+function membershipWarning() {
+  const info = (summary && summary.inference) || {};
+  if (info.role === "new_match" && info.membership && info.membership !== "verified_unseen") {
+    return `<p class="unavailable small">Training membership is not verified, so this estimate is not independent evidence.</p>`;
+  }
+  return "";
+}
+
 async function loadMatch(gameId) {
   const token = ++requestToken;
   if (inFlight) inFlight.controller.abort();
@@ -165,19 +254,25 @@ async function loadMatch(gameId) {
   heldout = nextHeldout;
   evaluation = nextEvaluation;
   mapConfig = map;
-  const metaParts = [summary.event, summary.map_name, `quality ${num(summary.quality_score, 2)}`];
-  if (summary.inference && summary.inference.storage === "preview") metaParts.push("temporary preview");
-  else if (summary.inference && summary.inference.role === "new_match") metaParts.push("saved");
-  if (summary.inference && summary.inference.label) metaParts.push(summary.inference.label);
-  meta.textContent = metaParts.filter(Boolean).join(" · ");
+  renderIdentity();
+  syncUnlistedOption();
   // The transform note is in Model details; only a missing map is shown here.
   note.hidden = Boolean(mapConfig && mapConfig.supported);
   note.textContent = note.hidden ? "" : (mapConfig && mapConfig.message) || "Map background unavailable.";
   squadSelect.innerHTML = "";
+  const seenNames = new Map();
+  for (const squad of summary.squads) {
+    const name = squad.teamName || "Unknown";
+    seenNames.set(name, (seenNames.get(name) || 0) + 1);
+  }
+  const used = new Map();
   for (const squad of summary.squads) {
     const option = document.createElement("option");
     option.value = String(squad.teamId);
-    option.textContent = `${squad.teamName} (${squad.teamId})`;
+    const name = squad.teamName || "Unknown";
+    const count = (used.get(name) || 0) + 1;
+    used.set(name, count);
+    option.textContent = seenNames.get(name) > 1 ? `${name} (${count})` : name;
     squadSelect.append(option);
   }
   const linkedTeam = new URLSearchParams(location.search).get("team");
@@ -288,6 +383,11 @@ function colorFor(teamId) {
   return squad ? squad.color : "#888";
 }
 
+// A team name with its map color, resolved by team id (the map's colorFor).
+function teamTagFor(teamId, fallbackName) {
+  return window.UI.teamTag(squadName(teamId) || fallbackName, colorFor(teamId));
+}
+
 function squadName(teamId) {
   const squad = (summary.squads || []).find((item) => String(item.teamId) === String(teamId));
   return squad ? squad.teamName : String(teamId);
@@ -332,6 +432,8 @@ function meter(label, value, max, className) {
 // One compact row per player.
 function renderRoster() {
   const team = selectedTeam();
+  const heading = document.querySelector("#squad-tag");
+  if (heading) heading.innerHTML = teamTagFor(team);
   const players = (frame.players || []).filter((player) => String(player.teamId) === team);
   if (!players.length) {
     roster.innerHTML = `<p class="unavailable">No players for this squad at this time.</p>`;
@@ -363,7 +465,7 @@ function renderRoster() {
 function comparisonTable(squads, valueKey) {
   const team = selectedTeam();
   const row = (squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
-      <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${textOrUnknown(squad.team_name)}</button></td>
+      <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${teamTagFor(squad.teamId, squad.team_name)}</button></td>
       <td class="num">${pct(squad[valueKey])}</td>
     </tr>`;
   const sorted = [...squads].sort((a, b) => b[valueKey] - a[valueKey]);
@@ -379,7 +481,7 @@ function probabilityTable(squads, valueKey, valueLabel, baselineKey) {
   const rows = [...squads]
     .sort((a, b) => b[valueKey] - a[valueKey])
     .map((squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
-        <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</button></td>
+        <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${teamTagFor(squad.teamId, squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</button></td>
         <td class="num">${pct(squad[valueKey])}</td>
         ${baselineKey ? `<td class="num">${pct(squad[baselineKey])}</td>` : ""}
       </tr>`).join("");
@@ -491,19 +593,6 @@ function predictionPanel(kind) {
   return `${viewHeader(kind)}${outcomePart}${livePart}${checkpointHistory(view, selection, `history-${kind}`)}`;
 }
 
-function estimateInfo(kind, live) {
-  const info = (summary && summary.inference) || {};
-  const provenance = (live && live.provenance) || info.provenance || {};
-  const limitation = (live && live.limitation) || info.limitation || "";
-  return `<details class="info" ${window.UI.keep("estimate-info")}><summary title="About this estimate" aria-label="About this estimate">ⓘ</summary>
-      <div class="info-body">
-        <p><strong>${esc(kindLabel(kind))}</strong> One estimate per replay second from the saved model, at the same second as the map and roster; nothing is interpolated.</p>
-        <p class="when">Model file ${esc(provenance.file || "Unknown")}, sha256 ${esc((provenance.sha256 || "").slice(0, 12) || "Unknown")}. Fit on ${esc(provenance.fit_on || "Unknown")}. Replay sha256 ${esc((provenance.telemetry_sha256 || "").slice(0, 12) || "Unknown")}.</p>
-        ${limitation ? `<p class="when">${esc(limitation)}</p>` : ""}
-        <p class="when">An unknown feature uses the saved training mean. Baseline: 1 ÷ squads still in contention.</p>
-      </div></details>`;
-}
-
 function estimateValue(live) {
   const point = live.point;
   const team = selectedTeam();
@@ -516,38 +605,34 @@ function estimateValue(live) {
 function renderNewMatchEstimate() {
   const info = summary.inference || {};
   const live = ((frame && frame.live) || {}).new_match || {};
-  const tag = `<span class="tag newmatch">new match</span>`;
-  const storage = info.storage === "preview"
-    ? `<span class="tag preview">temporary preview</span>`
-    : `<span class="tag newmatch">saved</span>`;
-  const infoBox = estimateInfo(NEW_MATCH, live);
+  const warn = membershipWarning();
   if (live.status === "loading") {
-    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="when">Computing win estimates from the saved model.</span></div>${infoBox}</div>`;
+    estimateBox.innerHTML = `<div class="estimate-head"><div><span class="when">Computing win estimates from the saved model.</span></div></div>${warn}`;
     scheduleEstimatePoll();
     return;
   }
   if (live.status === "unavailable" || live.available === false) {
-    estimateBox.innerHTML = `<p class="unavailable">No estimate is available for this match.</p><p class="when">${esc(live.reason || info.reason || "")}</p>`;
+    estimateBox.innerHTML = `<p class="unavailable">No estimate is available for this match.</p><p class="when">${esc(live.reason || info.reason || "")}</p>${warn}`;
     return;
   }
   if (frame && frame.finished) {
-    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="when">Match finished; no estimate after the result.</span></div>${infoBox}</div>${recordedOutcome()}`;
+    estimateBox.innerHTML = `<div class="estimate-head"><div><span class="when">Match finished; no estimate after the result.</span></div></div>${recordedOutcome()}${warn}`;
     return;
   }
   if (!live.point) {
     const reason = live.reason ? `: ${esc(live.reason)}` : "";
-    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="unavailable">No estimate at ${frame ? mmss(frame.elapsed) : "this time"}${reason}.</span></div>${infoBox}</div>`;
+    estimateBox.innerHTML = `<div class="estimate-head"><div><span class="unavailable">No estimate at ${frame ? mmss(frame.elapsed) : "this time"}${reason}.</span></div></div>${warn}`;
     return;
   }
   const { row, rank, ranked } = estimateValue(live);
   estimateBox.innerHTML = `<div class="estimate-head">
       <div class="estimate-value">${row ? pct(row.model) : "Unknown"}</div>
       <div class="estimate-text">
-        <strong>${esc(squadName(selectedTeam()))}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
-        <span class="when">${tag}${storage} at ${mmss(live.point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
+        <strong>${teamTagFor(selectedTeam())}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
+        <span class="when">at ${mmss(live.point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
       </div>
-      ${infoBox}
     </div>
+    ${warn}
     ${live.point.eligibility === "unverified" ? `<p class="unavailable small">${eligibilityText(live.point)}</p>` : ""}
     ${comparisonTable(live.point.squads, "model")}`;
 }
@@ -577,20 +662,13 @@ function renderEstimate() {
   }
   const view = kind === HELD_OUT ? heldout : curve;
   const live = ((frame && frame.live) || {})[kind === HELD_OUT ? "heldout" : "final"];
-  const tag = kind === HELD_OUT
-    ? `<span class="tag heldout">held-out</span>`
-    : `<span class="tag fitted">fitted · in-sample</span>`;
+  const role = summary && summary.inference && summary.inference.role;
+  const tag = kind === FINAL && role !== "unavailable" && role !== "new_match" ? `<span class="tag fitted">in-sample</span> ` : "";
   if (!view || !view.available) {
     estimateBox.innerHTML = `<p class="unavailable">No estimate is available for this match.</p><p class="when">${esc((view && (view.reason || view.message)) || "")}</p>`;
     return;
   }
-  const info = `<details class="info" ${window.UI.keep("estimate-info")}><summary title="About this estimate" aria-label="About this estimate">ⓘ</summary>
-      <div class="info-body">
-        <p><strong>${kindLabel(kind)}.</strong> One estimate per replay second from the frozen model, at the same second as the map and roster; nothing is interpolated.</p>
-        ${live && live.provenance ? `<p class="when">Model file ${esc(live.provenance.file || "Unknown")}, sha256 ${esc((live.provenance.sha256 || "").slice(0, 12) || "Unknown")}. Fit on ${esc(live.provenance.fit_on || "Unknown")}.</p>` : ""}
-        <p class="when">${esc(view.limitation || "")}</p>
-        <p class="when">Baseline: 1 ÷ squads still in contention. Full tables, inputs and evaluation are in Model details.</p>
-      </div></details>`;
+  const info = "";
   if (frame && frame.finished) {
     estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}<span class="when">Match finished; no estimate after the result.</span></div>${info}</div>${recordedOutcome()}`;
     return;
@@ -609,7 +687,7 @@ function renderEstimate() {
   estimateBox.innerHTML = `<div class="estimate-head">
       <div class="estimate-value">${row ? pct(row.model) : "Unknown"}</div>
       <div class="estimate-text">
-        <strong>${esc(squadName(team))}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
+        <strong>${teamTagFor(team)}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
         <span class="when">${tag}at ${mmss(point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
       </div>
       ${info}
@@ -629,10 +707,20 @@ function renderDetails() {
   if (!summary) return;
   const kind = primaryKind();
   const alt = kind === HELD_OUT ? FINAL : kind === NEW_MATCH ? FINAL : HELD_OUT;
+  const squadLine = (summary.squads || []).map((squad) => `${esc(squad.teamName || "Unknown")} (${esc(squad.teamId)})`).join(", ") || "Unknown";
   document.querySelector("#backend-details").innerHTML = backendInfo
-    ? `<p>Data backend: <strong>${esc(backendInfo.label || backendInfo.backend)}</strong> <span class="when">${esc(backendInfo.detail || "")}</span></p>`
+    ? `<dl class="facts"><dt>Backend</dt><dd>${esc(backendInfo.label || backendInfo.backend || "Unknown")}</dd><dt>Connection</dt><dd>${esc(backendInfo.detail || "Unknown")}</dd></dl>`
     : `<p class="when">Data backend: Unknown</p>`;
-  document.querySelector("#match-details").innerHTML = `<p class="when">Game ${esc(summary.game_id)} · session ${textOrUnknown(summary.session_id)} · ${textOrUnknown(summary.event)} · ${textOrUnknown(summary.map_name)} · quality ${num(summary.quality_score, 2)}${summary.winner && summary.winner.teamName ? ` · verified winner ${esc(summary.winner.teamName)}` : " · winner unknown"}.</p>
+  document.querySelector("#match-details").innerHTML = `<dl class="facts">
+      <dt>Game id</dt><dd>${esc(summary.game_id)}</dd>
+      <dt>Session id</dt><dd>${textOrUnknown(summary.session_id)}</dd>
+      <dt>Event</dt><dd>${textOrUnknown(summary.event)}</dd>
+      <dt>Map</dt><dd>${esc(readableMap(summary.map_name))}</dd>
+      <dt>Map id</dt><dd>${textOrUnknown(summary.map_name)}</dd>
+      <dt>Quality</dt><dd>${num(summary.quality_score, 2)}. An import is saved at 7.0 or above only when every acceptance check passes.</dd>
+      <dt>Squads</dt><dd>${squadLine}</dd>
+      <dt>Winner</dt><dd>${summary.winner && summary.winner.teamName ? `${esc(summary.winner.teamName)} (${textOrUnknown(summary.winner.teamId)})` : "Unknown"}</dd>
+    </dl>
     <p class="when">${frame ? `Showing ${mmss(frame.elapsed)} (replay t ${frame.t}); Playing started at replay t ${replayStart()}.` : ""}</p>
     <p class="when">${mapConfig && mapConfig.supported ? "Positions use the Overstat mapCord transform on the matching 2048 map. z is omitted. Only the current ring is shown." : esc((mapConfig && mapConfig.message) || "Map background unavailable.")}</p>
     <p class="when">${mapConfig && mapConfig.supported ? "" : `${esc(summary.coordinate_note || "")} `}Distances and heights elsewhere on this page are in unverified game units.</p>`;
@@ -685,7 +773,7 @@ function eventElapsed(item, event) {
 }
 
 function who(name, teamId) {
-  const team = teamId == null ? "" : ` (${esc(squadName(teamId))})`;
+  const team = teamId == null ? "" : ` (${teamTagFor(teamId)})`;
   return `${name ? esc(name) : "a player"}${team}`;
 }
 
@@ -695,21 +783,44 @@ function eventClause(event) {
   if (event.type === "revive") return `${who(event.actor_name, event.actor_team_id)} revived ${event.victim_name ? who(event.victim_name, event.victim_team_id) : "a teammate"}`;
   if (event.type === "respawn") return `${who(event.victim_name || event.actor_name, event.victim_team_id ?? event.actor_team_id)} respawned`;
   if (event.type === "squad_elimination") {
-    return event.ambiguous || event.victim_team_id == null ? "a squad was eliminated (team unclear)" : `${esc(squadName(event.victim_team_id))} was eliminated`;
+    return event.ambiguous || event.victim_team_id == null ? "a squad was eliminated (team unclear)" : `${teamTagFor(event.victim_team_id)} was eliminated`;
   }
   return "";
 }
 
-// One short sentence from the recorded events in the representative window.
-// Events involving the highlighted squad come first, then the rest, each in time order.
+// One short sentence for the card: the most relevant recorded event in the
+// representative window, preferring the highlighted squad. It states what was
+// recorded; it does not say the event caused the change. The rest is in Details.
 function eventSentence(item) {
   const all = (Array.isArray(item.events) ? item.events : []).filter((event) => EVENT_TYPES.has(event.type));
-  const events = [...all.filter((event) => event.side === "squad"), ...all.filter((event) => event.side !== "squad")];
-  if (!events.length) return "Win estimate changed; no matching event was identified.";
-  const clauses = events.slice(0, 2).map(eventClause).filter(Boolean);
-  const more = events.length - clauses.length;
-  const text = `${clauses.join("; ")}${more > 0 ? `; and ${more} more recorded event${more === 1 ? "" : "s"}` : ""}.`;
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  if (!all.length) return "Win estimate changed; no matching event was identified.";
+  const squad = item.squad_id != null ? String(item.squad_id) : null;
+  const victim = (event) => squad !== null ? String(event.victim_team_id) === squad : event.side === "squad";
+  const actor = (event) => squad !== null ? String(event.actor_team_id) === squad : false;
+  const rank = (event) => {
+    if (victim(event) && event.type === "squad_elimination") return 0;
+    if (victim(event) && event.type === "knock") return 1;
+    if (victim(event) || actor(event) || event.side === "squad") return 2;
+    return event.type === "squad_elimination" ? 3 : 4;
+  };
+  const lead = [...all].sort((a, b) => rank(a) - rank(b) || (Number(a.t) || 0) - (Number(b.t) || 0))[0];
+  return shortEvent(lead, victim(lead), actor(lead));
+}
+
+function shortEvent(event, onSquad, bySquad) {
+  const name = (text, start) => (text ? esc(text) : start ? "A player" : "a player");
+  const team = (id) => (id == null ? "an unknown squad" : teamTagFor(id));
+  if (event.type === "knock") {
+    if (onSquad) return `${name(event.victim_name, true)} was knocked by ${team(event.actor_team_id)}.`;
+    if (bySquad) return `${name(event.actor_name, true)} knocked ${name(event.victim_name)} of ${team(event.victim_team_id)}.`;
+    return `${team(event.actor_team_id)} knocked ${name(event.victim_name)} of ${team(event.victim_team_id)}.`;
+  }
+  if (event.type === "squad_elimination") {
+    return event.ambiguous || event.victim_team_id == null ? "A squad was eliminated (team unclear)." : `${team(event.victim_team_id)} was eliminated.`;
+  }
+  if (event.type === "revive") return `${name(event.actor_name, true)} revived ${event.victim_name ? name(event.victim_name) : "a teammate"}.`;
+  if (event.type === "respawn") return `${name(event.victim_name || event.actor_name, true)} respawned.`;
+  return "Win estimate changed; no matching event was identified.";
 }
 
 function eventLine(item, event) {
@@ -724,7 +835,9 @@ function momentDetails(item, key) {
   const prov = item.provenance || {};
   const windows = Number(item.windows_merged);
   const events = (Array.isArray(item.events) ? item.events : []).map((event) => eventLine(item, event)).join("");
-  return `<details class="sub" ${window.UI.keep(key)}><summary>Details</summary>
+  const count = (Array.isArray(item.events) ? item.events : []).length;
+  return `<details class="sub" ${window.UI.keep(key)}><summary>Details${count ? ` · ${count} recorded event${count === 1 ? "" : "s"}` : ""}</summary>
+    <p class="when">Events listed here coincide with the representative window. They are not identified as causes of the change.</p>
     <dl class="facts">
       <dt>Representative window</dt><dd>${UI.span(item.start_elapsed, item.end_elapsed)}${Number.isFinite(Number(item.window_s)) ? ` (${Number(item.window_s)} s)` : ""}: estimate ${pct(item.before)} → ${pct(item.after)}, ${pp(item.change_pp)}</dd>
       <dt>Full episode</dt><dd>${UI.span(item.episode_start_elapsed, item.episode_end_elapsed)}${Number.isFinite(windows) ? ` · ${windows} overlapping window${windows === 1 ? "" : "s"}` : ""}. The change above is for the representative window only, not the whole episode.</dd>
@@ -998,6 +1111,9 @@ function currentMoment() {
     start: replayStart(),
     team: selectedTeam(),
     squadName: squadSelect.selectedOptions[0] ? squadSelect.selectedOptions[0].textContent : selectedTeam(),
+    // This match's teamId -> name/color mapping, captured with the request so a
+    // review keeps its own colors after the selection changes.
+    squads: (summary.squads || []).map(({ teamId, teamName, color }) => ({ teamId, teamName, color })),
   } : null;
 }
 if (window.Coach) safely(() => window.Coach.init({ context: currentMoment, seek: seekHighlight }));
@@ -1015,11 +1131,16 @@ function ensureOption(gameId, label) {
   matchSelect.value = value;
 }
 
-async function openOverstat(url, gameNumber) {
+function setOpenStatus(text, tone) {
   const status = document.querySelector("#open-status");
+  status.hidden = !text;
+  status.textContent = text || "";
+  status.classList.toggle("unavailable", tone === "error");
+}
+
+async function openOverstat(url, gameNumber) {
   const choices = document.querySelector("#open-choices");
-  status.hidden = false;
-  status.textContent = "Opening…";
+  setOpenStatus("Opening…");
   choices.hidden = true;
   choices.innerHTML = "";
   const body = { url };
@@ -1033,42 +1154,42 @@ async function openOverstat(url, gameNumber) {
     });
     result = await response.json();
   } catch (error) {
-    status.textContent = "The match could not be opened.";
+    setOpenStatus("The match could not be opened.", "error");
     return;
   }
   if (result.status === "choose") {
-    status.textContent = result.message || "This session has more than one game. Choose one to open.";
+    setOpenStatus(result.message || "This session has more than one game. Choose one to open.");
     choices.hidden = false;
     for (const game of result.games || []) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "action quiet small";
       const quality = game.quality_score == null ? "quality unknown" : `quality ${num(game.quality_score, 2)}`;
-      button.textContent = `Game ${textOrUnknown(game.game_number)} · ${game.map_name || "map unknown"} · ${quality}`;
+      const gameNumberText = game.game_number == null || game.game_number === "" ? "Unknown" : String(game.game_number);
+      button.textContent = `Game ${gameNumberText} · ${readableMap(game.map_name)} · ${quality}`;
       button.addEventListener("click", () => openOverstat(url, game.game_number));
       choices.append(button);
     }
     return;
   }
   if (result.status === "retry") {
-    status.textContent = result.message || "Overstat rate-limited this request. Wait and try the same URL again.";
+    setOpenStatus(result.message || "Overstat rate-limited this request. Wait and try the same URL again.", "error");
     return;
   }
   if (result.status !== "ready" && result.status !== "exists") {
-    status.textContent = result.message || "This URL could not be opened.";
+    setOpenStatus(result.message || "This URL could not be opened.", "error");
     return;
   }
   const saved = result.storage !== "preview";
-  const heading = result.storage === "preview" ? "Temporary preview" : result.status === "ready" ? "Saved" : "Already open";
-  status.textContent = `${heading}. ${result.message || ""}`.trim();
+  setOpenStatus(result.message || (saved ? "Saved." : "Temporary preview."));
   if (!saved) {
-    ensureOption(result.game_id, `Temporary preview · game ${result.game_id}`);
+    ensureOption(result.game_id, "Opening…");
     await loadMatch(result.game_id);
     return;
   }
   await loadMatches(result.game_id);
   if (matchSelect.value !== String(result.game_id)) {
-    ensureOption(result.game_id, `Saved import · game ${result.game_id}`);
+    ensureOption(result.game_id, "Opening…");
     await loadMatch(result.game_id);
   }
 }
@@ -1077,13 +1198,183 @@ document.querySelector("#open-match").addEventListener("submit", (event) => {
   event.preventDefault();
   const url = document.querySelector("#overstat-url").value.trim();
   if (!url) {
-    const status = document.querySelector("#open-status");
-    status.hidden = false;
-    status.textContent = "Paste a public Overstat match, session, or replay URL.";
+    setOpenStatus("Paste a public Overstat match, session, or replay URL.", "error");
     return;
   }
   openOverstat(url);
 });
 
-loadBackend();
-loadMatches();
+// Help bubbles: hover and keyboard focus show them, click or tap pins them,
+// and Escape dismisses. The bubble stays open while the pointer moves into it.
+function installHelp() {
+  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #coach-run, .topbar a, .topbar h1";
+  let hideTimer = null;
+
+  function bubbleOf(help) { return help.querySelector(".help-bubble"); }
+  function buttonOf(help) { return help.querySelector(".help-btn"); }
+
+  function hide(help) {
+    const bubble = bubbleOf(help);
+    const button = buttonOf(help);
+    if (bubble) bubble.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+    help.classList.remove("is-pinned");
+  }
+
+  function overlapArea(rect, boxes) {
+    let area = 0;
+    for (const box of boxes) {
+      const x = Math.max(0, Math.min(rect.right, box.right) - Math.max(rect.left, box.left));
+      const y = Math.max(0, Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top));
+      area += x * y;
+    }
+    return area;
+  }
+
+  function place(help) {
+    const bubble = bubbleOf(help);
+    const button = buttonOf(help);
+    if (!bubble || !button) return;
+    bubble.hidden = false;
+    const margin = 8;
+    // On a narrow screen the bubble uses the full width so it is short enough
+    // to sit under the map instead of on the selectors.
+    const width = window.innerWidth < 720
+      ? Math.max(160, window.innerWidth - 16)
+      : Math.min(320, window.innerWidth - margin * 2);
+    bubble.style.width = `${width}px`;
+    const height = bubble.offsetHeight;
+    const anchor = button.getBoundingClientRect();
+    const essentials = [...document.querySelectorAll(ESSENTIAL)].map((el) => el.getBoundingClientRect());
+    const clamp = (left, top) => ({
+      left: Math.min(Math.max(0, left), Math.max(0, window.innerWidth - width)),
+      top: Math.min(Math.max(0, top), Math.max(0, window.innerHeight - height)),
+    });
+    let best = null;
+    const consider = (left, top) => {
+      const pos = clamp(left, top);
+      const rect = { left: pos.left, top: pos.top, right: pos.left + width, bottom: pos.top + height };
+      const overlap = overlapArea(rect, essentials);
+      const dist = Math.hypot(rect.left - anchor.right, rect.top - anchor.top);
+      const score = overlap * 1000 + dist;
+      if (!best || score < best.score) best = { ...pos, score, overlap };
+    };
+    const gap = 8;
+    consider(anchor.right + gap, anchor.top);
+    consider(anchor.left, anchor.bottom + gap);
+    consider(anchor.left - width - gap, anchor.top);
+    consider(anchor.left, anchor.top - height - gap);
+    const plot = document.querySelector("#plot");
+    const controls = document.querySelector(".controls");
+    if (plot && controls) {
+      const map = plot.getBoundingClientRect();
+      const bar = controls.getBoundingClientRect();
+      consider(map.right + gap, bar.bottom + gap);
+      consider(map.right + gap, anchor.top);
+    }
+    for (const box of essentials) {
+      consider(margin, box.bottom + 4);
+      consider(margin, box.top - height - 4);
+    }
+    if (!best || best.overlap > 0) {
+      for (let top = margin; top <= window.innerHeight - height - margin; top += 28) {
+        for (let left = margin; left <= window.innerWidth - width - margin; left += 28) consider(left, top);
+      }
+    }
+    bubble.style.left = `${best.left}px`;
+    bubble.style.top = `${best.top}px`;
+    button.setAttribute("aria-expanded", "true");
+  }
+
+  function show(help) {
+    clearTimeout(hideTimer);
+    document.querySelectorAll(".help").forEach((other) => {
+      if (other !== help && !other.classList.contains("is-pinned")) hide(other);
+    });
+    place(help);
+  }
+
+  function scheduleHide(help) {
+    if (!help || help.classList.contains("is-pinned")) return;
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!help.classList.contains("is-pinned") && !help.matches(":hover") && !help.contains(document.activeElement)) hide(help);
+    }, 700);
+  }
+
+  document.addEventListener("pointerover", (event) => {
+    const help = event.target.closest(".help");
+    if (!help || help.dataset.suppress === "1") return;
+    show(help);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const help = event.target.closest(".help");
+    if (!help) return;
+    if (event.relatedTarget && help.contains(event.relatedTarget)) return;
+    delete help.dataset.suppress;
+    scheduleHide(help);
+  });
+  document.addEventListener("focusin", (event) => {
+    const button = event.target.closest(".help-btn");
+    if (!button) return;
+    const help = button.closest(".help");
+    if (!help || help.dataset.suppress === "1") return;
+    show(help);
+  });
+  document.addEventListener("focusout", (event) => {
+    const help = event.target.closest(".help");
+    if (help) scheduleHide(help);
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest(".help-btn");
+    if (button) {
+      event.preventDefault();
+      event.stopPropagation();
+      const help = button.closest(".help");
+      if (help.classList.contains("is-pinned")) {
+        help.dataset.suppress = "1";
+        hide(help);
+      } else {
+        document.querySelectorAll(".help.is-pinned").forEach((other) => hide(other));
+        delete help.dataset.suppress;
+        help.classList.add("is-pinned");
+        show(help);
+      }
+      return;
+    }
+    if (event.target.closest(".help-bubble")) return;
+    document.querySelectorAll(".help.is-pinned").forEach((help) => hide(help));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const open = [...document.querySelectorAll(".help")].filter((help) => {
+      const bubble = bubbleOf(help);
+      return bubble && !bubble.hidden;
+    });
+    for (const help of open) {
+      help.dataset.suppress = "1";
+      hide(help);
+    }
+  });
+  const reposition = () => {
+    document.querySelectorAll(".help").forEach((help) => {
+      const bubble = bubbleOf(help);
+      if (bubble && !bubble.hidden) place(help);
+    });
+  };
+  window.addEventListener("scroll", reposition, true);
+  window.addEventListener("resize", reposition);
+}
+
+async function start() {
+  try {
+    Object.assign(MAP_NAMES, await (await fetch("/static/map_names.json")).json());
+  } catch (error) {
+    console.error(error);
+  }
+  installHelp();
+  loadBackend();
+  loadMatches();
+}
+
+start();

@@ -63,20 +63,22 @@ The plot is XY only; `z` is omitted. On a map version with a cached 2048 image, 
 
 ## Page layout
 
-The match page puts the map on the left and four cards on the right. The map column, `map_view.js`, the canvas and its controls are unchanged.
+The match page puts the map on the left and four cards on the right. Canvas size, zoom, and pan are unchanged. A fresh recorded yaw is an arrow; otherwise the mark is a dot. The arrow is not a verified line of sight, and no viewing cone is drawn (see [map-rendering.md](map-rendering.md)).
+
+The header shows the match and squad selectors, the time slider, and a compact Overstat URL field. Under them: the event name, a readable map name from the verified Overstat short-name table (`static/map_names.json`, the same table as `map_config.SHORT_NAMES`; otherwise “Unknown map”), one **Saved** or **Temporary preview** badge, and one prediction label: **Held-out**, **New match**, or **Fitted**. “?” buttons explain the collection threshold, a preview, and the estimate’s training membership. Import progress and errors stay on the page. Raw game, session, map, and team ids, training counts, and the database connection are in **Model details**.
 
 | Card | Shows | On demand |
 | --- | --- | --- |
 | **Selected squad** | One row per player: status, HP and shields as `value/max`. Eliminated players keep the 0-with-maximum display | — |
-| **Win estimate** | One primary estimate, tagged *Experimental estimate*. It is held-out on a held-out test game, and otherwise the fitted model, tagged `fitted · in-sample`. Rank among squads still in contention, the contention baseline, and a clickable comparison table | ⓘ: provenance and limitations. Eliminated squads fold into one row |
-| **Key moments** | Two carousels, *Win estimate rose* and *Win estimate fell*, each with up to 3 detected highlights from the primary model. Each card shows the representative window (MM:SS–MM:SS) and one sentence built from the recorded knocks, revives, respawns and eliminations in that window. Events involving the highlighted squad come first. With no such event it reads "Win estimate changed; no matching event was identified." | *Details*: the window's exact change in percentage points, the full episode span (stated as not carrying the window's change), the model file, the server's event summary, and each event with a clickable time |
-| **AI Coach** | **Analyze this situation**, the review summary and its conditional recommendations. The decision review's recommendation, takeaway and retrospective attribution | Factors, evidence and uncertainty; weaknesses and alternatives; evidence packets; tactical measurements |
+| **Win estimate** | One primary estimate, tagged *Experimental estimate*. A fitted estimate also shows *in-sample* beside the number. Rank among squads still in contention, the contention baseline, and a clickable comparison table | Provenance, file hashes, and training counts are in Model details. Eliminated squads fold into one row |
+| **Key moments** | Two carousels, *Win estimate rose* and *Win estimate fell*, each with up to 3 detected highlights from the primary model. Each card shows the representative window and one sentence for the most relevant recorded knock, revive, respawn or elimination in that window. With no such event it reads "Win estimate changed; no matching event was identified." | *Details*: the window's exact change, the full episode span, the model file, and the recorded events in the window |
+| **AI Coach** | **Analyze this situation**. The first line is the short recommended action from the current prompt, kept conditional and in plain language. Team names keep their map colors. Nothing is sent until Analyze or Review decision is clicked | Details, alternatives, the evidence packet, and tactical measurements |
 
 Arrows change the displayed card only. They never seek, move the camera or call the AI. Clicking a card's time seeks with the same path as the slider. **Review decision** appears on *Win estimate fell* cards. Drawers that are re-rendered every second (`data-keep`) stay open while seeking.
 
 **Model details** is a dialog that opens over the page without changing the scroll position, slider, squad or camera. It holds:
 
-- the backend connection detail, game and session IDs, quality, the verified winner and replay timestamps;
+- the backend connection detail, game and session ids, the raw map id, squad names with team ids, quality, the verified winner and replay timestamps;
 - the primary model's provenance (training counts, per-game log loss, file, full sha256), the full table with baseline column, the model inputs and the 30-second checkpoint history;
 - the alternate estimate and its key-moment list (with **Review decision**);
 - the full held-out evaluation table.
@@ -105,7 +107,7 @@ So the Tiger-backed dashboard still needs the local data directory for the ring.
 
 Quality on the selector is the manifest's unrounded per-game score. It is not a model feature. The match dropdown lists numeric quality from highest to lowest, with missing scores last and the higher game id first when scores tie.
 
-`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The label is “New-match prediction · model trained on the original 51 games.” when the game id and replay hash are both absent from that model’s training inventory. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
+`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The visible label is “New match.” The help text and Model details say it is a forward pass of that model, not a held-out evaluation and not fitted on this game, when the game id and replay hash are both absent from the training inventory. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
 
 Opening an Overstat URL is documented in [open-match.md](open-match.md). A saved import is a separate `user-import` collection. A temporary preview stays out of Tiger Data and expires after 24 hours.
 

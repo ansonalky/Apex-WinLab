@@ -35,7 +35,7 @@ set -a; . ./.env; set +a
 - The import is already done for the current database. Rerun `--all` only after a schema change; it is idempotent.
 - `--backend tiger` exits if the database cannot be used.
 - `--backend auto` uses Tiger when `SELECT 1` succeeds and matches are imported, and otherwise falls back to files and says why.
-- The page header always names the active backend.
+- Model details names the active backend and why. The match header does not.
 
 ### Local file backend
 
@@ -51,7 +51,7 @@ Use the default match: **duo kval lobby 1**, game 123633, session 23047, map `mp
 
 | Time | Show | What to say |
 | --- | --- | --- |
-| 0:00–0:30 | Header: "Data backend: Tiger Data database". Match menu tag `[held-out test]`. | "This match was never seen in training or model selection. Its session is in the frozen test split." |
+| 0:00–0:30 | Match menu tag `[held-out]`. Model details: backend "Tiger Data database" and the connection line. | "This match was never seen in training or model selection. Its session is in the frozen test split." |
 | 0:30–1:00 | Slider at 00:00, then 09:45. | Map: positions use the Overstat replay's own map transform on the matching 2048 image. Ring line: at 00:00, "Ring 0 · waiting 02:05"; at 09:45, "Ring 1 · closing". Only the current ring is drawn, with the outside shaded; future rings are never shown. |
 | 1:00–1:30 | Selected-squad roster; held-out panel at 09:45. | Roster: health, shields and status at the slider second. Prediction: made at that same second ("Held-out prediction at 09:45, replay t …, the same second as the map and roster"), with squads already eliminated set to 0%. Open "Model inputs" to show the 12 features the model saw. |
 | 1:30–2:15 | A knock: slider at 18:47, then 18:48, then 18:51. | 18:47: both EQT players alive, EQT 44.3%. 18:48: NAGGI is downed, and EQT drops to **30.5%** in the same second. 18:51: the other squad also has a player downed, and EQT is back to 45.3%. That reflects the state, plus a known feature limitation (section 4). |
@@ -161,7 +161,7 @@ Not measurably with this data. Neither the v1 position features nor ring-relativ
 
 - [ ] Stats tab (Cursor): merge it, then rerun `.venv/bin/python -m unittest discover -s tests -q` and recheck the walkthrough in the browser.
 - [ ] Open a PR from `model-pipeline` to `main` and merge it.
-- [ ] Demo machine: copy `data/` (gitignored), create `.env` with `DATABASE_URL`, and confirm the header says "Tiger Data database (SELECT 1 ok; 51 imported matches)".
+- [ ] Demo machine: copy `data/` (gitignored), create `.env` with `DATABASE_URL`, and confirm Model details says "Tiger Data database" with "SELECT 1 ok; 51 imported matches".
 - [ ] Rehearse the walkthrough once on the demo network. Seek speed before the cache loads depends on network round-trip time.
 - [ ] Add `.DS_Store` to `.gitignore` (currently untracked).
 - [ ] Decide whether to fix the session count in `HANDOFF.md` (23 → 22).

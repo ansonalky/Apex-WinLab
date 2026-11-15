@@ -41,6 +41,7 @@ def good_analysis() -> dict:
         "recommendations": [{"type": "conditional_recommendation", "condition": "If the attackers still have sightlines",
                              "text": "consider breaking line of sight before healing.", "evidence_ids": ["FIRE-10S"]}],
         "missing_information": ["Terrain and cover between the squads."],
+        "next_action": "If the attackers can still see you, break away and heal before re-engaging.",
     }
 
 

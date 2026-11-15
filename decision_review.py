@@ -30,14 +30,14 @@ import re
 from typing import Any
 
 import coach
-from coach import RING_RULE, TERRAIN_RULE, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
+from coach import NEXT_ACTION_RULE, RING_RULE, TERRAIN_RULE, check_next_action, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
 from live_predictions import FINAL, HELD_OUT, NEW_MATCH
 from match_inference import LABEL as NEW_MATCH_LABEL
 from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
 
-DECISION_PROMPT_VERSION = "decision-v4"
+DECISION_PROMPT_VERSION = "decision-v5"
 LEAD_S = 10
 MOVE_OFFSETS_S = (30, 60)
 OPTIONS = ("hold", "regroup", "disengage", "rotate_to_verified_position")
@@ -379,6 +379,9 @@ Tasks:
    Make it conditional on something a reviewer can check. Put that clause only in "condition";
    "rationale" explains why, starting with its most important reason, and does not repeat the condition.
 5. practice_takeaway: one concrete thing to review or practise.
+6. {NEXT_ACTION_RULE.lstrip("- ")}
+   It must match the recommendation; when the recommendation is "abstain", use the
+   "Insufficient information—check ..." form.
 
 Feasibility rules:
 {TERRAIN_RULE}
@@ -465,9 +468,11 @@ def decision_schema(packet: dict) -> dict:
                 "evidence_ids": pre_ids,
             }, "required": ["choice", "condition", "rationale", "evidence_ids"], "additionalProperties": False},
             "practice_takeaway": {"type": "string"},
+            "next_action": {"type": "string", "description": "10-20 words (max 25), plain language, keeps its condition."},
             "missing_information": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["drop_attribution", "weaknesses", "options", "recommendation", "practice_takeaway", "missing_information"],
+        "required": ["drop_attribution", "weaknesses", "options", "recommendation", "practice_takeaway", "missing_information",
+                     "next_action"],
         "additionalProperties": False,
     }
 
@@ -569,6 +574,12 @@ def validate_decision(analysis: Any, packet: dict) -> list[str]:
     for text in claims:
         problems += terrain_claims(text)
     problems += terrain_claims(rec.get("rationale") or "", conditional=bool((rec.get("condition") or "").strip()))
+    check_next_action(analysis.get("next_action"), packet, every, problems)
+    insufficient = bool(coach.INSUFFICIENT.match((analysis.get("next_action") or "").strip()))
+    if choice == "abstain" and not insufficient:
+        problems.append("next action gives an action although the recommendation abstains")
+    elif choice in OPTIONS and insufficient:
+        problems.append("next action says the information is insufficient although an option is recommended")
     return problems
 
 

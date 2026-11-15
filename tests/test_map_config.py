@@ -6,7 +6,7 @@ import json
 import unittest
 from pathlib import Path
 
-from map_config import MAP_SIZE, current_ring, map_cord_r, map_cord_x, map_cord_y, map_key, map_spec, public_config
+from map_config import MAP_SIZE, SHORT_NAMES, current_ring, map_cord_r, map_cord_x, map_cord_y, map_key, map_spec, public_config
 
 
 class TransformTest(unittest.TestCase):
@@ -27,6 +27,10 @@ class TransformTest(unittest.TestCase):
         self.assertEqual(map_key("mp_rr_desertlands_mu5"), "worlds_edge")
         self.assertIsNone(map_key("mp_rr_district_mu1_night"))
         self.assertIsNone(map_spec("mp_rr_district_mu1_night"))
+
+    def test_dashboard_names_match_the_verified_short_names(self):
+        path = Path(__file__).resolve().parents[1] / "static" / "map_names.json"
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), SHORT_NAMES)
 
     def test_unsupported_map_says_background_unavailable(self):
         config = public_config("mp_rr_district_mu1_night")

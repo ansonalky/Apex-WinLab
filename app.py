@@ -9,7 +9,7 @@ Launch from the repository root, pointing at the telemetry directory:
 through ``TigerReader`` and fails if the database cannot be used.
 ``--backend auto`` uses Tiger Data when ``DATABASE_URL`` connects and holds
 imported matches, else local files. The active backend, and why, is served at
-``/api/backend`` and shown on the page.
+``/api/backend`` and shown in Model details.
 
 ``--expansion-dir`` adds another accepted-game directory. Those games are not
 given a frozen split or a held-out label. A new-match forward pass of the
@@ -239,6 +239,11 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
             abort(404)
         frame_ms = (time.perf_counter() - started) * 1000
         frame["ring"] = ring_at(game_id, frame["t"])
+        # Recorded facing (yaw) at this exact second, from the local replay. Display only.
+        try:
+            frame["facing"] = tactical.facing_at(game_id, frame["t"])
+        except Exception:  # never let facing break a frame
+            frame["facing"] = {"fresh_s": None, "players": {}}
         frame["live"] = {
             "heldout": live.at(game_id, frame["t"], HELD_OUT),
             "final": live.at(game_id, frame["t"], FINAL),

@@ -4,18 +4,24 @@
   background: #121418;
   color: #e7e9ee;
 }
-body { margin: 0; padding: 1.25rem 1.5rem 2rem; }
+body { margin: 0; padding: 0.75rem 1rem 1.5rem; }
 h1 { margin: 0; font-size: 1.4rem; }
 h2 { font-size: 1rem; margin: 1rem 0 0.4rem; }
 .lede, .note, .meta { color: #b7beca; max-width: 70rem; }
-.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-top: 1rem; }
-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
-select, input[type="range"] { min-width: 16rem; }
-.open-match { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; align-items: end; max-width: 36rem; }
-.open-match input[type="url"] { min-width: 18rem; background: #1b1f27; color: #e7e9ee; border: 1px solid #2c3340; border-radius: 6px; padding: 0.3rem 0.45rem; }
-#open-status, #open-choices { width: 100%; margin: 0; }
-#open-choices { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.slider { min-width: 22rem; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.55rem 0.8rem; align-items: end; margin-top: 0.45rem; }
+label, .field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.label-line { display: inline-flex; align-items: center; gap: 0.3rem; }
+select, input[type="range"] { min-width: 12rem; max-width: 22rem; }
+.open-match { display: flex; flex-wrap: wrap; gap: 0.35rem 0.45rem; align-items: end; flex: 1 1 16rem; max-width: 28rem; }
+.open-match input[type="url"] { width: 14rem; min-width: 0; background: #1b1f27; color: #e7e9ee; border: 1px solid #2c3340; border-radius: 6px; padding: 0.3rem 0.45rem; }
+.open-feedback { flex: 1 1 100%; margin: 0; }
+#open-status[hidden], #open-choices[hidden] { display: none !important; }
+#open-choices:not([hidden]) { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.slider { min-width: 14rem; flex: 1 1 16rem; }
+@media (max-width: 720px) {
+  .controls > .field, .controls > .slider, .open-match { flex: 1 1 100%; max-width: none; }
+  select, .open-match input[type="url"], input[type="range"] { width: 100%; max-width: none; min-width: 0; }
+}
 .layout { display: grid; grid-template-columns: minmax(280px, 720px) minmax(260px, 1fr); gap: 1.25rem; align-items: start; }
 canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c3340; border-radius: 8px; }
 .panel, .player { background: #1b1f27; border: 1px solid #2c3340; border-radius: 8px; padding: 0.75rem; }
@@ -136,8 +142,18 @@ table.probs tr.selected button.squad-name { font-weight: 600; }
 .badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 99px; background: #2c3340; color: #b7beca; }
 .badge.tiger { background: #1f4a33; color: #8cd17d; }
 .badge.files { background: #4a3a1f; color: #ffbe7d; }
-.topbar + .controls { margin-top: 0.6rem; }
-#match-meta { margin: 0.4rem 0 0.6rem; font-size: 0.85rem; }
+.topbar + .controls { margin-top: 0.4rem; }
+.identity { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.65rem; margin: 0.35rem 0 0.45rem; font-size: 0.9rem; }
+.identity-event { font-weight: 600; }
+.identity-status, .identity-pred { display: inline-flex; align-items: center; gap: 0.25rem; }
+.badge.saved, .badge.newmatch { background: #1f4a33; color: #8cd17d; }
+.badge.preview, .badge.fitted { background: #4a3a1f; color: #ffbe7d; }
+.badge.heldout { background: #1f3a57; color: #a0cbe8; }
+.help { display: inline-flex; }
+.help-btn { font: inherit; font-size: 0.72rem; width: 1.15rem; height: 1.15rem; padding: 0; line-height: 1; border-radius: 99px; border: 1px solid #3d4d66; background: transparent; color: #a0cbe8; cursor: pointer; }
+.help-btn:hover, .help-btn:focus-visible { border-color: #a0cbe8; outline: 2px solid #4e79a7; outline-offset: 1px; }
+.help-bubble { position: fixed; z-index: 40; box-sizing: border-box; width: min(20rem, calc(100vw - 16px)); margin: 0; padding: 0.45rem 0.65rem; background: #121418; color: #e7e9ee; border: 1px solid #4e79a7; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 0.8rem; font-weight: 400; line-height: 1.35; text-align: left; }
+.help-bubble[hidden] { display: none !important; }
 #clock { font-variant-numeric: tabular-nums; }
 .small { font-size: 0.78rem; }
 
@@ -224,3 +240,11 @@ dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
 .side .coach-drawers { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; align-items: start; margin-top: 0.5rem; }
 .side .coach-drawers > details { margin-top: 0; min-width: 0; }
 .side .coach-drawers > details[open] { grid-column: 1 / -1; }
+/* Team names with their map color (marker plus plain text). */
+.team-ref { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+.team-swatch { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35); }
+/* Compact stale notice with its explanation on hover or keyboard focus. */
+.side .coach .stale.tip { position: relative; display: inline-block; cursor: help; margin-bottom: 0.4rem; }
+.side .coach .stale.tip::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 6; width: min(24rem, 80vw); padding: 0.4rem 0.55rem; font-size: 0.8rem; color: #e7e9ee; background: #121418; border: 1px solid #4e79a7; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity 0.1s; }
+.side .coach .stale.tip:hover::after, .side .coach .stale.tip:focus::after { opacity: 1; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

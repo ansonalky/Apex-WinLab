@@ -49,7 +49,7 @@ from match_inference import LABEL as NEW_MATCH_LABEL
 from tactical import LIMITS as TACTICAL_LIMITS
 from tactical import bearing, measure
 
-PROMPT_VERSION = "coach-v3"
+PROMPT_VERSION = "coach-v4"
 PACKET_VERSION = 1
 WINDOW_S = 60
 CHANGE_OFFSETS_S = (30, 60)
@@ -100,6 +100,14 @@ TERRAIN_RULE = """- Cover, sightlines, line of sight, buildings, high-ground con
   in the packet. You may ask about them, make a suggestion conditional on them ("If a covered route to
   the teammate exists, consider ..."), or say they are unknown. Never state that one exists or holds
   (for example "the squad has cover" or "the route is safe")."""
+NEXT_ACTION_RULE = """- next_action: the one sentence a player sees first. 10 to 20 words, never more than 25, in
+  plain gameplay language, for example "Move inside the ring while Lucien heals; stay close enough to
+  support." Keep in the same sentence the condition that makes it valid (if, when, while, unless, once,
+  before, after or until); never turn conditional advice into an unconditional order. Name players or
+  squads rather than narrating positions. No evidence IDs, unit counts, coordinates, heights or
+  technical terms, and do not start with "Consider". When no specific action is supported, write
+  exactly "Insufficient information—check " followed by what to check."""
+
 RING_RULE = """- Name rings only by their "label" or "ring_number" (ring N is the N-th ring to close). "stage_raw"
   is an internal 0-based index; never quote it as a ring or stage number."""
 
@@ -135,6 +143,9 @@ Grounding rules:
   each either a conditional recommendation or a review question. No unconditional commands.
   Put the condition only in "condition" (the "If ..." or "When ..." clause) and only the action or
   question in "text". "text" must not repeat the condition. List the most useful item first.
+
+{NEXT_ACTION_RULE}
+  It must agree with your first recommendation.
 
 Output limits: situation_summary at most two sentences; at most three factors;
 one or two recommendations; list missing information that could change the assessment."""
@@ -595,8 +606,9 @@ def output_schema(packet: dict) -> dict:
                 "additionalProperties": False,
             }},
             "missing_information": {"type": "array", "items": {"type": "string"}},
+            "next_action": {"type": "string", "description": "10-20 words (max 25), plain language, keeps its condition."},
         },
-        "required": ["situation_summary", "factors", "recommendations", "missing_information"],
+        "required": ["situation_summary", "factors", "recommendations", "missing_information", "next_action"],
         "additionalProperties": False,
     }
 
@@ -734,6 +746,33 @@ def terrain_claims(text: str, conditional: bool = False) -> list[str]:
 
 
 
+NEXT_ACTION_MAX_WORDS = 25
+INSUFFICIENT = re.compile(r"^Insufficient information\s*[\u2014\u2013:-]+\s*check\b", re.I)
+_CONDITIONAL = re.compile(r"\b(if|when|while|unless|once|before|after|until|as long as|provided)\b", re.I)
+_TECHNICAL = re.compile(r"\b(\d[\d,.]*\s*(game\s+)?units?|dz|z[- ]?(height|value|position)|centroid|stage_raw|packet|evidence|replay t)\b", re.I)
+
+
+def check_next_action(text: Any, packet: dict, ids: set, problems: list[str]) -> None:
+    """The short visible action. It goes through the same number, time, claim and terrain
+    checks as every other field, plus length, plain-language and keep-the-condition rules."""
+    text = (text or "").strip() if isinstance(text, str) else ""
+    if not text:
+        problems.append("next action is empty")
+        return
+    words = len(text.split())
+    if words > NEXT_ACTION_MAX_WORDS:
+        problems.append(f"next action has {words} words (at most {NEXT_ACTION_MAX_WORDS})")
+    if not INSUFFICIENT.match(text) and not _CONDITIONAL.search(text):
+        problems.append(f"next action drops the condition that makes it valid: \"{text[:120]}\"")
+    id_hits = sorted({i for i in ids if re.search(rf"(?<![\w-]){re.escape(i)}(?![\w-])", text)})
+    if id_hits:
+        problems.append(f"next action names evidence IDs {id_hits}")
+    if _TECHNICAL.search(text):
+        problems.append(f"next action uses units or technical terms: \"{text[:120]}\"")
+    check_texts([text], packet, ids, problems)
+    problems += terrain_claims(text)
+
+
 def validate_analysis(analysis: Any, packet: dict) -> list[str]:
     """Reasons to reject a model response. Empty means it may be shown."""
     if not isinstance(analysis, dict):
@@ -783,6 +822,7 @@ def validate_analysis(analysis: Any, packet: dict) -> list[str]:
         problems += terrain_claims(text)
     for rec in recs:
         problems += terrain_claims(rec.get("text") or "", conditional=bool((rec.get("condition") or "").strip()))
+    check_next_action(analysis.get("next_action"), packet, ids, problems)
     return problems
 
 

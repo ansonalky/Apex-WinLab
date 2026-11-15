@@ -59,6 +59,7 @@ def good_review() -> dict:
                            "rationale": "Regrouping addresses the separation.", "evidence_ids": ["SEP", "REF-MATE-1"]},
         "practice_takeaway": "Review spacing calls when the first damage arrives.",
         "missing_information": ["Terrain and cover between teammates."],
+        "next_action": "Regroup with Alel if the path between you is not exposed to the north-east fire.",
     }
 
 
@@ -112,6 +113,7 @@ class ValidateDecision(unittest.TestCase):
     def test_abstain_is_allowed(self):
         r = good_review()
         r["recommendation"] = {"choice": "abstain", "condition": "", "rationale": "The evidence is too thin.", "evidence_ids": []}
+        r["next_action"] = "Insufficient information—check whether the squad could see the attackers."
         self.assertEqual(validate_decision(r, tiny_packet()), [])
 
     def test_schema_separates_evidence_sets(self):
@@ -157,7 +159,7 @@ class VerifyDecisionPacket(unittest.TestCase):
             c = Coach(Path(tmp), call=fake, env=env)
             self.assertEqual(c.analyze(tiny_packet(), DECISION)["status"], "rejected")
             ok = c.analyze(tiny_packet(), DECISION)
-            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v4"))
+            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v5"))
             self.assertTrue(c.analyze(tiny_packet(), DECISION)["cached"])
         self.assertIn("retrospective", seen[0]["system"])
         self.assertIn("REF-MATE-1", json.dumps(seen[0]["schema"]))

@@ -83,5 +83,42 @@ class RingLabel(unittest.TestCase):
         self.assertIsNone(ring_label("not_revealed", None, LAST_CLOSED)["ring_number"])
 
 
+class NextAction(unittest.TestCase):
+    """The short visible action keeps every grounding check and adds length,
+    keep-the-condition and plain-language rules."""
+
+    def problems(self, text):
+        situation = good_analysis()
+        situation["next_action"] = text
+        return validate_analysis(situation, tiny_packet())
+
+    def test_concise_conditional_action_passes(self):
+        self.assertEqual(self.problems("Move inside the ring while Lucien heals; stay close enough to support."), [])
+
+    def test_insufficient_form_passes(self):
+        self.assertEqual(self.problems("Insufficient information—check whether the squad could see the attackers."), [])
+
+    def test_too_long_is_rejected(self):
+        long = "If they can still see you " + " ".join(["move"] * 30) + "."
+        self.assertTrue(any("words (at most 25)" in p for p in self.problems(long)))
+
+    def test_dropped_condition_is_rejected(self):
+        self.assertTrue(any("drops the condition" in p for p in self.problems("Push the attackers now.")))
+
+    def test_evidence_ids_units_and_terrain_are_rejected(self):
+        self.assertTrue(any("evidence IDs" in p for p in self.problems("If FIRE-10S continues, heal first.")))
+        self.assertTrue(any("units or technical" in p for p in self.problems("If safe, move 439 units toward the ring.")))
+        self.assertTrue(any("cover" in p for p in self.problems("Use the cover to the east while you heal.")))
+        self.assertTrue(any("not in the evidence" in p for p in self.problems("If attacked, fall back 12 metres while healing.")))
+
+    def test_decision_abstain_must_say_insufficient(self):
+        review = good_review()
+        review["recommendation"] = {"choice": "abstain", "condition": "", "rationale": "Too thin.", "evidence_ids": []}
+        self.assertTrue(any("abstains" in p for p in validate_decision(review, decision_packet())))
+        review = good_review()
+        review["next_action"] = "Insufficient information—check the replay."
+        self.assertTrue(any("insufficient although" in p for p in validate_decision(review, decision_packet())))
+
+
 if __name__ == "__main__":
     unittest.main()

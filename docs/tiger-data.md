@@ -77,7 +77,7 @@ Every import verifies database counts and sampled player states against the loca
 - `--backend files` reads local files.
 - `--backend auto` uses Tiger when `SELECT 1` succeeds and matches are imported; otherwise it uses files and says why.
 
-The page header and `/api/backend` always show the active backend and the reason.
+`/api/backend` returns the active backend and the reason. Model details shows both; the match header does not.
 
 ## Final results
 

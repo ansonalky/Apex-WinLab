@@ -30,7 +30,20 @@ Game 123349 checked against the recorded rings: at t=100 the stage-0
 ring is waiting (125s, radius 67999.9453); at t=355 it is halfway
 closed (radius 47249.97265); at t=550 stage 1 is waiting.
 
-The same camera draws the image, player dots, labels, and the ring.
-Zoom is 1×–8×, centered on the pointer, and drag pans. Dots and the
+The same camera draws the image, player marks, labels, and the ring.
+Zoom is 1×–8×, centered on the pointer, and drag pans. Marks and the
 ring stroke stay a constant screen size. Reset returns to the full
 map. A different map id clears the camera. Seeking does not.
+
+## Facing arrows
+
+An arrow is the recorded yaw at that replay second (`angles.y`). It is
+degrees in [-180, 180], 0 along replay +x, increasing counter-clockwise.
+The arrow uses the same projection as the mark, so zoom and pan turn it
+with the map. A yaw older than the position freshness window, or an
+eliminated player, is a dot. Alive and downed players can show an arrow.
+
+The arrow is not verified visibility. The replay does not establish what
+that player can see, and yaw is not a line of sight. Viewing cones stay
+off: a cone would need a field of view and map geometry, and this data
+has neither. Nothing here infers facing from movement.

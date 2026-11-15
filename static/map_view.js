@@ -91,8 +91,24 @@ function paint(view) {
     const mine = String(player.teamId) === String(selectedTeam);
     ctx.globalAlpha = mine ? 1 : 0.45;
     ctx.fillStyle = colorFor(player.teamId);
+    const size = mine ? 7 : 4.5;
+    const heading = facingDirection(frame, player, project, px, py);
     ctx.beginPath();
-    ctx.arc(px, py, mine ? 7 : 4.5, 0, Math.PI * 2);
+    if (heading) {
+      // An arrow along the recorded yaw, anchored at the player's position.
+      const [ux, uy] = heading;
+      const tipX = px + ux * size * 1.9;
+      const tipY = py + uy * size * 1.9;
+      const backX = px - ux * size * 0.9;
+      const backY = py - uy * size * 0.9;
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(backX - uy * size * 1.1, backY + ux * size * 1.1);
+      ctx.lineTo(px - ux * size * 0.35, py - uy * size * 0.35);
+      ctx.lineTo(backX + uy * size * 1.1, backY - ux * size * 1.1);
+      ctx.closePath();
+    } else {
+      ctx.arc(px, py, size, 0, Math.PI * 2);
+    }
     ctx.fill();
     if (mine && player.name) {
       ctx.globalAlpha = 1;
@@ -434,6 +450,28 @@ function ringText(ring) {
   const countdown = ring.countdown_s == null ? "" : ` ${formatClock(ring.countdown_s)}`;
   if (!countdown) return ring.label;
   return ring.state === "closing" ? `${ring.label} ·${countdown} left` : `${ring.label} · closes in${countdown}`;
+}
+
+// Screen direction of a player's recorded yaw, or null for a plain dot.
+// Yaw is angles.y: degrees, 0 along replay +x, counter-clockwise (verified on
+// three replays; see docs/map-rendering.md). The direction goes through the same
+// project() as the marker, so map flips, zoom and pan are applied to it. A
+// facing written more than frame.facing.fresh_s seconds ago is stale and shows
+// a dot; so does an eliminated player. Alive and downed players can show an
+// arrow. The arrow is recorded yaw, not verified visibility. No viewing cone
+// is drawn: that would need a field of view and map geometry, which this
+// data does not have. Facing is never inferred from movement.
+function facingDirection(frame, player, project, px, py) {
+  const facing = frame.facing && frame.facing.players && frame.facing.players[player.id];
+  const fresh = frame.facing && frame.facing.fresh_s;
+  if (!facing || typeof facing.yaw !== "number" || typeof facing.age_s !== "number" || typeof fresh !== "number") return null;
+  if (facing.age_s > fresh || (player.status !== "alive" && player.status !== "downed")) return null;
+  const radians = (facing.yaw * Math.PI) / 180;
+  const [qx, qy] = project(player.x + Math.cos(radians) * 1000, player.y + Math.sin(radians) * 1000);
+  const dx = qx - px;
+  const dy = qy - py;
+  const length = Math.hypot(dx, dy);
+  return length > 0 ? [dx / length, dy / length] : null;
 }
 
 function formatClock(seconds) {

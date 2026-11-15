@@ -30,7 +30,7 @@ from typing import Any
 
 from dashboard_data import _raw_path, _record
 from features import STANDING
-from overstat_patch import apply_frame, export_players, frame_entries, initial_state
+from overstat_patch import _leaf, apply_frame, export_players, frame_entries, initial_state
 from ring_features import live_entries, ring_at
 from ring_label import LAST_CLOSED, ring_label
 from turning_points import recorded_events
@@ -69,6 +69,37 @@ def bearing(dx: float, dy: float) -> tuple[float, str]:
     """Map bearing from a vector in replay x/y (x east, y north), degrees clockwise from north."""
     degrees = math.degrees(math.atan2(dx, dy)) % 360
     return round(degrees, 1), SECTORS[int(((degrees + 22.5) % 360) // 45)]
+
+
+# A recorded yaw written more than this many seconds ago is stale (same rule as positions).
+FACING_FRESH_S = FRESH_GAP_S
+
+
+def _facing(state: dict, observed: dict, t: int) -> dict:
+    """Recorded facing per player hash: ``angles.y``.
+
+    Verified on three replays (docs/map-rendering.md): degrees in [-180, 180],
+    0 along replay +x, increasing counter-clockwise. ``angles.x`` and ``angles.z``
+    are almost always 0 and are not used. The producer writes a value only when it
+    changes, so ``age_s`` is the time since the last write; an unchanged facing
+    and missing data cannot be told apart, and an old value counts as stale.
+    """
+    players = state.get("players")
+    if not isinstance(players, dict):
+        return {}
+    player_obs = observed.get("players") if isinstance(observed, dict) else None
+    player_obs = player_obs if isinstance(player_obs, dict) else {}
+    out = {}
+    for player_id, player in players.items():
+        if not isinstance(player, dict):
+            continue
+        obs = player_obs.get(player_id)
+        leaf = _leaf(player, obs if isinstance(obs, dict) else {}, t, "angles", "y")
+        yaw = _number(leaf["value"])
+        if yaw is None or not -180 <= yaw <= 180:
+            continue
+        out[player.get("nucleusHash", player_id)] = {"yaw": round(yaw, 1), "age_s": leaf["gap"]}
+    return out
 
 
 def _player(row: dict) -> dict:
@@ -162,6 +193,7 @@ class TacticalIndex:
                 "players": [_player(row) for row in export_players(state, observed, t)],
                 "ring": ring_at(live_entries(state, observed), t),
                 "phase": state.get("state"),
+                "facing": _facing(state, observed, t),
             }
         # Feed events on the frame's replay clock, for the coach's recent-events window.
         return {"playing_start": start, "seconds": seconds, "damage": damage, "events": recorded_events(series)}
@@ -177,6 +209,12 @@ class TacticalIndex:
             while len(self._games) > CACHE_GAMES:
                 self._games.popitem(last=False)
         return built
+
+    def facing_at(self, game_id: int, t: int) -> dict:
+        """Recorded facing at exactly second ``t`` (no carrying from another second)."""
+        game = self.game(game_id)
+        second = game["seconds"].get(t) if game else None
+        return {"fresh_s": FACING_FRESH_S, "players": (second or {}).get("facing") or {}}
 
     def at(self, game_id: int, t: int, team: Any) -> dict:
         game = self.game(game_id)
