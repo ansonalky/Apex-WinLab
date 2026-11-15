@@ -87,6 +87,46 @@ The request uses the structured output schema. Recommendation evidence enums lis
   The layout of a full review and the map marker were checked with a page-local stub labelled "STUB UI TEST — not a model response".
 - **Real Gemini review (`gemini-4-hydrogen`, 31 s):** the attribution was own-squad deterioration, citing only `R-*` and retrospective events. It compared regroup (destination `REF-MATE-2`), hold and disengage, and its options and recommendation cited only pre-decision evidence. It recommended a conditional regroup and gave a spacing takeaway. It passed every check.
 
+## Prompt `decision-v4`: terrain claims in options (2026-11-15)
+
+**Why.** Two real `decision-v3` responses at Meaningless 13:47 were rejected by the unchanged grounding checks:
+
+- an option `cost` read "risks entering sightlines";
+- an option `expected_benefit` read "allowing both players to coordinate cover".
+
+The prompt asked for each option's benefit and cost but did not say how to express them without terrain outcomes.
+
+**Change** (decision prompt only). The shared `TERRAIN_RULE`, the situation prompt and all validators are unchanged. The new instructions say:
+
+- state benefit and cost with measured quantities (distance, direction, height difference, damage, members standing, ring margin, timing);
+- put terrain dependence in the option's `uncertainty` field or in an explicit same-clause condition;
+- never present cover, sightlines, buildings, high ground or a safe route as something a move gives or risks;
+- reread those fields before answering;
+- write each terrain item to check as its own "whether …" clause, not a comma list.
+
+**Evaluation.** First attempt only, cache bypassed, no retries, `gemini-4-hydrogen` at `medium`.
+
+- **Moments:** one held-out downward episode in each of the 6 held-out test games, at its default decision time. Three are the game's largest drop (17:24–19:15) and three its earliest (02:30–04:09). The Alel episode was excluded.
+- **Budget:** 12 calls (`decision-v3` vs a first candidate), then one further round of 6 calls for the refined candidate. 18 calls in total.
+
+| Prompt | First-attempt accepted | Mean latency (min–max) | Tokens per call: in / out / thinking |
+| --- | --- | --- | --- |
+| `decision-v3` | 4/6 | 28.7 s (22.6–34.9) | 10,584 / 1,846 / 4,494 |
+| candidate 1 | 5/6 | 33.0 s (27.0–37.1) | 10,823 / 2,304 / 5,555 |
+| **`decision-v4`** (candidate 2) | **6/6** | 30.6 s (23.9–36.6) | 10,885 / 2,134 / 5,178 |
+
+Rejections:
+
+- `decision-v3`, game 123659 18:48: a benefit read "support mutual cover", the same pattern as at 13:47.
+- `decision-v3`, game 123633 17:24: a percentage in the rationale, under the existing alternative-probability rule.
+- candidate 1, game 123639 02:30: the takeaway listed "nearby cover and sightlines" in a comma list after "check". The checks scope hedges per clause, which led to the last instruction above.
+
+**Limits.**
+
+- Six moments is a small sample, and candidate 2 was refined after seeing candidate 1's results on the same moments. 6/6 is not a measured acceptance rate.
+- `decision-v4` adds about 290 output and 680 thinking tokens per call over `v3`, and about 2 s on average.
+- Moving terrain dependence into `uncertainty` is intended: that field states what is unknown, and the checks treat it so. The responses themselves were not kept for a manual audit of that field.
+
 ## Limitations
 
 - **Terrain:** there is no terrain, cover, line-of-sight or navmesh data. The terrain check is a wording check, not geometry.

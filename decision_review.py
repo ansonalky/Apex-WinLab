@@ -36,7 +36,7 @@ from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
 
-DECISION_PROMPT_VERSION = "decision-v3"
+DECISION_PROMPT_VERSION = "decision-v4"
 LEAD_S = 10
 MOVE_OFFSETS_S = (30, 60)
 OPTIONS = ("hold", "regroup", "disengage", "rotate_to_verified_position")
@@ -380,7 +380,24 @@ Feasibility rules:
   proof of current exposure.
 - Every number you write must appear in the packet (you may round it). Times are mm:ss of
   elapsed match time as in the packet.
-- Do not claim a factor caused a loss or assign a share of winning to it."""
+- Do not claim a factor caused a loss or assign a share of winning to it.
+
+Writing options, the rationale, the attribution and the takeaway:
+- State each option's expected_benefit and cost with what the packet measures: distance to a
+  teammate or reference point, direction relative to recent fire or nearby squads, height
+  difference, damage taken or dealt, members standing, ring margin and timing.
+- This packet has no terrain data. When a benefit or cost depends on cover, line of sight,
+  buildings, high-ground control or whether a path is safe, say so in that option's
+  "uncertainty", or write it as a condition in the same clause ("if the path to the teammate is
+  shielded from the north-east, ..."). Never present it as something the move achieves, gives or
+  risks: not "lets them use cover", "enters sightlines", "breaks line of sight" or "takes the high
+  ground".
+- Before answering, reread every expected_benefit, cost, rationale, attribution and takeaway, and
+  rewrite any clause that presents cover, sightlines, buildings, high-ground control or a safe
+  route as existing.
+- When you ask the reviewer to check terrain (in the takeaway, a condition or a weakness), give each
+  item its own "whether ..." clause, for example "check whether the south side has cover and whether
+  the north approach is exposed", not a comma-separated list of features."""
 
 
 def decision_user_message(packet: dict) -> str:
