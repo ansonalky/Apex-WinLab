@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('static/decision.js','utf8');
 const code=source.slice(source.indexOf('  function reviewRequest('),source.indexOf('  box && box.addEventListener'));
 const requests=[];
-const ctx={running:false,state:null,result:null,token:0,LEAD_S:10,context:()=>ctx.now,now:{game:888,team:'7',t:190,start:100,squadName:'Squad',squads:[]},
+const ctx={output:null,running:false,state:null,result:null,token:0,LEAD_S:10,context:()=>ctx.now,now:{game:888,team:'7',t:190,start:100,squadName:'Squad',squads:[]},
  box:{scrollIntoView(){}},window:{UI:{teamIndex(){return {};}}},render(){},redraw(){},readTime:()=>ctx.state.decisionElapsed,
  async run(request){ctx.running=true;requests.push(request);await Promise.resolve();ctx.running=false;}};
 vm.createContext(ctx);vm.runInContext(code,ctx);

@@ -1,4 +1,4 @@
-// AI tactical review: runs only on an explicit Analyze or Start demo click, for
+// AI tactical review: runs only on an explicit Analyze click, for
 // the match, squad and second shown at that moment. The request never blocks
 // seeking. A review stays labeled with its own second when the replay moves.
 // After an error the old review is removed, never shown as if it were new.
@@ -211,7 +211,7 @@ window.Coach = (() => {
   }
 
   function update() {
-    if (!shownResult || !box) return;
+    if (!shownResult || !box || (window.ReviewPanel && !window.ReviewPanel.active("situation"))) return;
     const slot = box.querySelector(".stale-slot");
     if (!slot) return;
     const now = context();
@@ -241,6 +241,8 @@ window.Coach = (() => {
 
   async function run(request) {
     if (running || !box || !request) return;
+    const lease = window.ReviewPanel ? window.ReviewPanel.acquire("situation", request) : true;
+    if (!lease) return;
     lastRequest = request;
     teams = teamsFor(request.squads);
     const mine = ++token;
@@ -248,24 +250,36 @@ window.Coach = (() => {
     if (button) button.disabled = true;
     box.setAttribute("aria-busy", "true");
     controller = new AbortController();
+    const requestController = controller;
     const timeoutMs = 1000 * ((status && status.timeout_s) || 90) + 15000;
-    const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+    const timer = setTimeout(() => requestController.abort("timeout"), timeoutMs);
     shownResult = null;
     box.innerHTML = `${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}
       <p><button type="button" class="action quiet" data-coach="cancel">Cancel</button></p>`;
     setDetails(`<p class="when">Waiting for the review of ${esc(request.squadName)} at ${clock(request.elapsed)}.</p>`);
     const stopClock = ReviewStatus.startClock(box, ReviewStatus.announce);
+    const cancel = () => {
+      if (mine !== token) return;
+      token += 1;
+      requestController.abort("cancel");
+      clearTimeout(timer); stopClock(); running = false;
+      box.setAttribute("aria-busy", "false");
+      if (button) button.disabled = false;
+      box.innerHTML = errorView({error: "Stopped waiting for this review. Provider work or billing may continue.", kind: "cancelled", retryable: true}, request);
+      if (window.ReviewPanel) window.ReviewPanel.release(lease);
+    };
+    requestController.cancelReview = cancel;
     let result;
     try {
       const response = await fetch(`/api/matches/${request.game}/coach`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ t: request.t, team: request.team }),
-        signal: controller.signal,
+        signal: requestController.signal,
       });
       result = await response.json().catch(() => ({ status: "error", error: `HTTP ${response.status}`, retryable: true }));
     } catch (error) {
-      result = ReviewStatus.classifyFailure(controller.signal);
+      result = ReviewStatus.classifyFailure(requestController.signal);
     } finally {
       clearTimeout(timer);
       stopClock();
@@ -273,6 +287,7 @@ window.Coach = (() => {
         running = false;
         if (button) button.disabled = false;
         box.setAttribute("aria-busy", "false");
+        if (window.ReviewPanel) window.ReviewPanel.release(lease);
       }
     }
     if (mine !== token) return;
@@ -301,6 +316,7 @@ window.Coach = (() => {
   }
 
   async function start(expected = null) {
+    if (window.ReviewPanel && window.ReviewPanel.busy()) return false;
     if (running) return false;
     const request = context();
     if (!request) return false;
@@ -311,6 +327,7 @@ window.Coach = (() => {
   }
 
   function onClick(event) {
+    if (window.ReviewPanel && !window.ReviewPanel.active("situation")) return;
     const chip = event.target.closest("button.evidence");
     if (chip) {
       const elapsed = Number(chip.dataset.elapsed);
@@ -323,8 +340,8 @@ window.Coach = (() => {
     const action = event.target.closest("button[data-coach]");
     if (!action) return;
     if (action.dataset.coach === "retry") {
-      if (!running) run(lastRequest);
-    } else if (action.dataset.coach === "cancel" && controller) controller.abort("cancel");
+      run(lastRequest);
+    } else if (action.dataset.coach === "cancel" && controller) controller.cancelReview();
   }
   box && box.addEventListener("click", onClick);
   detailsBox && detailsBox.addEventListener("click", onClick);
@@ -336,7 +353,7 @@ window.Coach = (() => {
     } catch (error) {
       status = null;
     }
-    if (!box || shownResult || running) return;
+    if (!box || shownResult || running || (window.ReviewPanel && !window.ReviewPanel.active("situation"))) return;
     if (!status) {
       box.innerHTML = `<p class="unavailable">AI provider status could not be loaded.</p>`;
     } else if (!status.configured) {
@@ -357,6 +374,7 @@ window.Coach = (() => {
   // original match, squad and time, and is labeled stale if the selection moves.
   function reset() {
     if (running) return;
+    if (window.ReviewPanel) window.ReviewPanel.clear("situation");
     token += 1;
     if (controller) controller.abort("cancel");
     shownResult = null;
@@ -365,6 +383,7 @@ window.Coach = (() => {
     if (box) {
       box.setAttribute("aria-busy", "false");
       loadStatus();
+      if (window.ReviewPanel) window.ReviewPanel.refresh();
     }
   }
 

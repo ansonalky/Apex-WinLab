@@ -5,6 +5,7 @@
 // shown in this panel and never reaches replay startup or seeking.
 window.DecisionReview = (() => {
   const box = document.querySelector("#decision");
+  const output = document.querySelector("#coach");
   const pin = document.querySelector("#decision-pin");
   const LEAD_S = 10;
   let context = () => null;
@@ -79,12 +80,13 @@ window.DecisionReview = (() => {
 
   function render(body) {
     if (!box || !state) return;
-    box.innerHTML = `${episodeView()}${controlsView()}<div class="decision-body">${body || ""}</div>`;
+    box.innerHTML = `${episodeView()}${controlsView()}`;
+    setBody(body || "");
     updatePin();
   }
 
   function setBody(html) {
-    const body = box && box.querySelector(".decision-body");
+    const body = output;
     if (body) body.innerHTML = html;
   }
 
@@ -232,8 +234,8 @@ window.DecisionReview = (() => {
 
   function update() {
     updatePin();
-    if (!result || !box) return;
-    const slot = box.querySelector(".stale-slot");
+    if (!result || !output || (window.ReviewPanel && !window.ReviewPanel.active("decision"))) return;
+    const slot = output.querySelector(".stale-slot");
     const now = context();
     if (!slot || !now) return;
     const notice = (text, explanation, viewing) =>
@@ -289,33 +291,44 @@ window.DecisionReview = (() => {
 
   async function run(request) {
     if (running || !request || !state) return;
+    const lease = window.ReviewPanel ? window.ReviewPanel.acquire("decision", request) : true;
+    if (!lease) return;
     lastRequest = request;
     const mine = ++token;
     running = true;
     setRunEnabled(false);
     controller = new AbortController();
-    const timer = setTimeout(() => controller.abort("timeout"), 105000);
+    const requestController = controller;
+    const timer = setTimeout(() => requestController.abort("timeout"), 105000);
     result = null;
     redraw();
     setBody(`${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}<p><button type="button" class="action quiet" data-decision="cancel">Cancel</button></p>`);
-    const stopClock = ReviewStatus.startClock(box.querySelector(".decision-body"), ReviewStatus.announce);
+    const stopClock = ReviewStatus.startClock(output, ReviewStatus.announce);
+    requestController.cancelReview = () => {
+      if (mine !== token) return;
+      token += 1; requestController.abort("cancel");
+      clearTimeout(timer); stopClock(); running = false; setRunEnabled(true);
+      setBody(errorView({error: "Stopped waiting for this review. Provider work or billing may continue.", kind: "cancelled", retryable: true}, request));
+      if (window.ReviewPanel) window.ReviewPanel.release(lease);
+    };
     let r;
     try {
       const response = await fetch(`/api/matches/${request.game}/decision-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind: request.kind, team: request.team, start_t: request.start_t, episode_start_t: request.episode_start_t, decision_t: request.decision_t }),
-        signal: controller.signal,
+        signal: requestController.signal,
       });
       r = await response.json().catch(() => ({ status: "error", error: `HTTP ${response.status}`, retryable: true }));
     } catch (error) {
-      r = ReviewStatus.classifyFailure(controller.signal);
+      r = ReviewStatus.classifyFailure(requestController.signal);
     } finally {
       clearTimeout(timer);
       stopClock();
       if (mine === token) {
         running = false;
         setRunEnabled(true);
+        if (window.ReviewPanel) window.ReviewPanel.release(lease);
       }
     }
     if (mine !== token || !state) return;
@@ -341,6 +354,7 @@ window.DecisionReview = (() => {
   }
 
   function startReview() {
+    if (window.ReviewPanel && window.ReviewPanel.busy()) return;
     if (running) return;
     const elapsed = readTime();
     if (elapsed === null) return;
@@ -355,6 +369,7 @@ window.DecisionReview = (() => {
 
   // The key-moment action has already sought and synchronized the replay.
   async function start(expected) {
+    if (window.ReviewPanel && window.ReviewPanel.busy()) return false;
     if (running || !state) return false;
     const now = context();
     if (!now || String(now.game) !== String(expected.game) || String(now.team) !== String(expected.team)
@@ -369,6 +384,7 @@ window.DecisionReview = (() => {
     if (running) return;
     const now = context();
     if (!now || !box) return;
+    if (window.ReviewPanel && !window.ReviewPanel.select("decision")) return;
     token += 1;
     result = null;
     if (!Number.isFinite(item.episode_start_elapsed) || !Number.isFinite(item.episode_end_elapsed)
@@ -381,13 +397,15 @@ window.DecisionReview = (() => {
       // This match's teamId -> name/color, kept with the review.
       teamTag: window.UI.teamIndex(now.squads),
     };
+    if (window.ReviewPanel) window.ReviewPanel.describe("decision", {squadName: state.squadName, elapsed: suggested});
     render(`<p class="when">Nothing has been requested. Adjust the decision time if needed, then click “Review decision”.</p>`);
     redraw();
-    box.scrollIntoView({ behavior: "smooth", block: "start" });
+    (output || box).scrollIntoView({ behavior: "smooth", block: "nearest" });
     return suggested;
   }
 
-  box && box.addEventListener("click", (event) => {
+  function onClick(event) {
+    if (window.ReviewPanel && !window.ReviewPanel.active("decision")) return;
     try {
       const chip = event.target.closest("button.evidence");
       if (chip) {
@@ -402,11 +420,13 @@ window.DecisionReview = (() => {
       else if (what === "seek") { const e = readTime(); if (e !== null) seekTo(e); }
       else if (what === "suggested") { state.decisionElapsed = state.suggestedElapsed; box.querySelector("#decision-time").value = clock(state.suggestedElapsed); showError(""); updatePin(); }
       else if (what === "retry" && lastRequest && !running) { seekTo(lastRequest.elapsed); run(lastRequest); }
-      else if (what === "cancel" && controller) controller.abort("cancel");
+      else if (what === "cancel" && controller) controller.cancelReview();
     } catch (error) {
       console.error(error);
     }
-  });
+  }
+  box && box.addEventListener("click", onClick);
+  output && output.addEventListener("click", onClick);
   box && box.addEventListener("change", (event) => { if (event.target.id === "decision-time") readTime(); });
   pin && pin.addEventListener("click", (event) => {
     const chip = event.target.closest("button.evidence");
@@ -421,11 +441,13 @@ window.DecisionReview = (() => {
 
   function reset() {
     if (running) return;
+    if (window.ReviewPanel) window.ReviewPanel.clear("decision");
     token += 1;
     if (controller) controller.abort("cancel");
     state = null;
     result = null;
     lastRequest = null;
+    if (!window.ReviewPanel || window.ReviewPanel.active("decision")) setBody(`<p class="when">Choose a downward key moment to review.</p>`);
     updatePin();
     if (box) box.innerHTML = `<p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p>`;
   }

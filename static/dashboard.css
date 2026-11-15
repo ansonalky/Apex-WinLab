@@ -269,3 +269,13 @@ dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
 .timeline-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; }
 .timeline-legend { margin: 0.3rem 0 0; font-size: 0.75rem; color: #b7beca; }
 .timeline-tip { margin: 0.15rem 0 0; min-height: 1rem; font-size: 0.8rem; }
+
+/* Map controls are anchored to the canvas, independently of replay controls. */
+.map-viewport { position: relative; }
+.map-viewport canvas { display: block; box-sizing: border-box; }
+.review-modes { display: flex; gap: .35rem; margin: .6rem 0; }
+.review-modes button { color: #bac4d2; background: #1b2029; border: 1px solid transparent; border-radius: 6px; padding: .45rem .7rem; cursor: pointer; }
+.review-modes button[aria-selected="true"] { color: #fff; background: #263c59; border-color: #688bb6; }
+.review-modes button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+#decision-details[hidden], #situation-details[hidden] { display: none; }
+#review-notice:empty { display: none; }

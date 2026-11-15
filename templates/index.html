@@ -62,7 +62,7 @@
       <span id="observer-ring-explanation" class="sr-only">Shows recorded future rings; players may not have known them.</span>
       <span id="observer-ring-status" role="status"></span>
     </div>
-    <canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas>
+    <div class="map-viewport"><canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas></div>
     <div id="event-timeline" class="event-timeline" hidden></div>
   </div>
     <div class="side">
@@ -83,19 +83,26 @@
       </section>
       <section class="card">
         <h2 class="with-action">AI Coach <span class="tag ai">AI-generated</span> <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
+        <div class="review-modes" role="tablist" aria-label="Review mode">
+          <button type="button" role="tab" data-review-mode="situation" aria-controls="coach">Current situation</button>
+          <button type="button" role="tab" data-review-mode="decision" aria-controls="coach">Key decision</button>
+        </div>
+        <p id="review-context" class="review-for">Current situation</p>
+        <p id="review-notice" class="when" role="status"></p>
+        <details id="decision-details" class="sub" hidden><summary>Decision details</summary>
+          <div id="decision" class="coach"><p class="when">Choose a downward key moment to review.</p></div>
+        </details>
         <div id="coach" class="coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
         <div class="coach-drawers">
           <details class="sub" data-keep="tactical">
             <summary>Tactical measurements <span class="when">(not used by the model)</span></summary>
             <div id="tactical"></div>
           </details>
-          <details class="sub" data-keep="coach-review-details">
+          <details id="situation-details" class="sub" data-keep="coach-review-details">
             <summary>Review details</summary>
             <div id="coach-details" class="coach"><p class="when">No review yet.</p></div>
           </details>
         </div>
-        <h3>Decision review</h3>
-        <div id="decision" class="coach" aria-live="polite"><p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p></div>
       </section>
     </div>
   </div>
@@ -116,6 +123,7 @@
   <script src="/static/map_view.js"></script>
   <script src="/static/ui.js"></script>
   <script src="/static/tactical.js"></script>
+  <script src="/static/review_panel.js"></script>
   <script src="/static/coach.js"></script>
   <script src="/static/decision.js"></script>
   <script src="/static/timeline.js"></script>

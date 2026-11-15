@@ -274,6 +274,7 @@ function waitForKeyMoment(signal) {
   });
 }
 function reviewKeyMoment() {
+  if (window.ReviewPanel && window.ReviewPanel.busy()) return Promise.resolve(false);
   if (keyMomentRun) return keyMomentRun;
   const game = String(matchSelect.value), team = selectedTeam();
   const mine = ++keyMomentEpoch;
