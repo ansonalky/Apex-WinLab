@@ -78,3 +78,15 @@ Every import verifies database counts and sampled player states against the loca
 - `--backend auto` uses Tiger when `SELECT 1` succeeds and matches are imported; otherwise it uses files and says why.
 
 The page header and `/api/backend` always show the active backend and the reason.
+
+## Final results
+
+`team_results` and `player_results` hold one final line per team and per player per game. `import_results.py` replaces only those two tables. It does not delete replay frames or predictions. The performance page queries them directly. See `docs/performance-stats.md`.
+
+```sh
+.venv/bin/python import_results.py --data-dir data --dry-run
+set -a; . ./.env; set +a
+.venv/bin/python import_results.py --data-dir data --check-reimport
+```
+
+Matches must already be imported. `DATABASE_URL` stays in `.env`. Without it, the command prints `Database verification is pending.` and does not claim the tables were loaded.

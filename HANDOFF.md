@@ -1,6 +1,24 @@
 # Handoff
 
-Milestone 3B discovery has started and stopped at the accepted-game target. No features, model, database, or UI. Raw telemetry is gitignored.
+## Performance page (local import still required)
+
+Team and player results are extracted from cached standings, not from replay frames. `teamId` is match-local. Rosters are Overstat `playerId` sets. Average points are used only when every team in a game matches placement points plus one kill point. Otherwise the page ranks by average placement.
+
+This machine has no `DATABASE_URL`. Schema and queries are written. They have not been run against Tiger Data.
+
+```sh
+.venv/bin/python -m unittest tests.test_results -q
+.venv/bin/python import_results.py --data-dir data --dry-run
+set -a; . ./.env; set +a
+.venv/bin/python import_results.py --data-dir data --check-reimport
+.venv/bin/python app.py --data-dir data --port 5050 --backend auto
+```
+
+Open `/stats` after the import. Matches must already be in Tiger Data (`import_tiger.py --data-dir data --all`). The results import deletes and reinserts only `team_results` and `player_results`.
+
+## Earlier collection notes
+
+Milestone 3B discovery has started and stopped at the accepted-game target. Raw telemetry is gitignored.
 
 ## Rule
 

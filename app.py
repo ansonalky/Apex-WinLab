@@ -25,6 +25,7 @@ from flask import Flask, abort, jsonify, render_template
 from dashboard_data import MatchStore
 from live_predictions import FINAL, HELD_OUT, LivePredictions
 from map_api import map_bp, ring_at
+from stats_api import stats_bp
 
 
 def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[object, dict]:
@@ -73,6 +74,7 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     # The map and ring endpoints read local replay files under either backend.
     app.config["DATA_DIR"] = data_dir.resolve()
     app.register_blueprint(map_bp)
+    app.register_blueprint(stats_bp)
     # Per-second predictions are computed from the local replay and the frozen
     # model files under either backend, and cached in memory.
     live = LivePredictions(data_dir.resolve())

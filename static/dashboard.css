@@ -30,6 +30,22 @@ canvas { width: 100%; height: auto; background: #1b1f27; border: 1px solid #2c33
 .backend strong { padding: 0.1rem 0.45rem; border-radius: 99px; }
 .backend.tiger strong { background: #1f4a33; color: #8cd17d; }
 .backend.files strong { background: #4a3a1f; color: #ffbe7d; }
+.nav { display: flex; gap: 0.8rem; margin: 0.6rem 0 0.2rem; }
+.nav a { color: #a0cbe8; text-decoration: none; }
+.nav a[aria-current="page"] { color: #e7e9ee; border-bottom: 2px solid #4e79a7; }
+.tabs { display: flex; gap: 0.4rem; margin: 0.8rem 0; }
+.tab { background: #1b1f27; color: #e7e9ee; border: 1px solid #2c3340; border-radius: 99px; padding: 0.25rem 0.7rem; }
+.tab.on { border-color: #4e79a7; }
+.stats-layout { grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); }
+.table-wrap { overflow-x: auto; }
+table.stats { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.stats th, table.stats td { text-align: left; padding: 0.35rem 0.45rem; border-bottom: 1px solid #2c3340; }
+table.stats th { cursor: pointer; color: #b7beca; font-weight: 600; }
+table.stats td.num, table.stats th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.stats tr:hover { background: #1b1f27; }
+.method { margin-top: 1.2rem; color: #b7beca; max-width: 70rem; }
+.method p { margin: 0.4rem 0; }
+input[type="number"] { width: 5rem; background: #1b1f27; color: #e7e9ee; border: 1px solid #2c3340; border-radius: 6px; padding: 0.25rem; }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }
