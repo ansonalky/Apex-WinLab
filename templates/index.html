@@ -42,13 +42,23 @@
       <div id="roster"></div>
       <h2>Held-out win probability</h2>
       <div id="heldout" class="panel primary"></div>
+      <h2>Largest changes in model estimate <span class="tag heldout">held-out</span></h2>
+      <div id="highlights-heldout" class="panel primary highlights"><p class="when">Loading…</p></div>
       <h2>Final model &middot; fitted on these games</h2>
       <div id="curve" class="panel secondary"></div>
+      <h2>Largest changes in model estimate <span class="tag fitted">fitted on these games</span></h2>
+      <div id="highlights-final" class="panel secondary highlights"><p class="when">Loading…</p></div>
       <h2>Held-out evaluation &middot; all test games</h2>
       <div id="evaluation" class="panel"></div>
+      <h2 class="with-action">Tactical situation <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
+      <div id="tactical" class="panel"></div>
+      <h2>AI tactical review <span class="tag ai">AI-generated</span></h2>
+      <div id="coach" class="panel coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
     </div>
   </div>
   <script src="/static/map_view.js"></script>
+  <script src="/static/tactical.js"></script>
+  <script src="/static/coach.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

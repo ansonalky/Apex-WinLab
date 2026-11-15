@@ -9,6 +9,8 @@ const roster = document.querySelector("#roster");
 const curveBox = document.querySelector("#curve");
 const heldoutBox = document.querySelector("#heldout");
 const evalBox = document.querySelector("#evaluation");
+const heldoutHighlights = document.querySelector("#highlights-heldout");
+const finalHighlights = document.querySelector("#highlights-final");
 const outcome = document.querySelector("#outcome");
 const canvas = document.querySelector("#plot");
 const ctx = canvas.getContext("2d");
@@ -25,6 +27,7 @@ let requestToken = 0;
 // next and skips the ones in between.
 let inFlight = null;
 let pendingSeek = null;
+let highlightToken = 0;
 
 function mmss(seconds) {
   const whole = Math.max(0, Math.round(seconds));
@@ -100,6 +103,11 @@ async function loadMatch(gameId) {
   if (inFlight) inFlight.controller.abort();
   inFlight = null;
   pendingSeek = null;
+  highlightToken += 1;
+  if (window.Coach) safely(() => window.Coach.reset());
+  if (window.DecisionReview) safely(() => window.DecisionReview.reset());
+  heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
   timeInput.disabled = true;
   let nextSummary, nextCurve, nextHeldout, evaluation;
   try {
@@ -112,6 +120,8 @@ async function loadMatch(gameId) {
   } catch (error) {
     if (token !== requestToken) return;
     meta.textContent = `Match ${gameId} could not be loaded.`;
+    heldoutHighlights.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
+    finalHighlights.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
     console.error(error);
     return;
   }
@@ -155,6 +165,7 @@ async function loadMatch(gameId) {
   currentRing = null;
   renderEvaluation(evaluation);
   clock.textContent = mmss(0);
+  loadHighlights();
   await loadFrame(0);
 }
 
@@ -196,6 +207,8 @@ async function loadFrame(elapsed) {
     draw();
     renderRoster();
     renderPredictions();
+    if (window.Coach) safely(() => window.Coach.update());
+    if (window.DecisionReview) safely(() => window.DecisionReview.update());
   }
   if (pendingSeek !== null) {
     const latest = pendingSeek;
@@ -204,7 +217,17 @@ async function loadFrame(elapsed) {
     if (frame) shown.textContent = `loading · showing ${mmss(frame.elapsed)}`;
   } else if (frame) {
     shown.textContent = frame.elapsed === Number(timeInput.value) ? `showing ${mmss(frame.elapsed)}` : `showing ${mmss(frame.elapsed)} (latest stored second)`;
+    loadTactical();
   }
+}
+
+// Explanatory panel, loaded once seeking has been still for 250 ms.
+let tacticalTimer = null;
+function loadTactical() {
+  clearTimeout(tacticalTimer);
+  tacticalTimer = setTimeout(() => {
+    if (window.Tactical && frame && summary) window.Tactical.load(summary.game_id, frame.t, selectedTeam(), summary.squads);
+  }, 250);
 }
 
 // A recorded result from the replay, not a model output.
@@ -234,21 +257,39 @@ function colorFor(teamId) {
   return squad ? squad.color : "#888";
 }
 
+function squadName(teamId) {
+  const squad = (summary.squads || []).find((item) => String(item.teamId) === String(teamId));
+  return squad ? squad.teamName : String(teamId);
+}
+
+// AI panels are optional: a failure there must never stop the replay.
+function safely(fn, fallback) {
+  try {
+    return fn();
+  } catch (error) {
+    console.error(error);
+    return fallback;
+  }
+}
+
 function draw() {
   if (!frame) return;
+  const markers = window.DecisionReview ? safely(() => window.DecisionReview.markers(summary.game_id), []) : [];
   window.ApexMap.draw({
+    markers,
     canvas,
     ctx,
     frame,
     selectedTeam: selectedTeam(),
     colorFor,
+    squadName,
     ring: currentRing,
     mapConfig,
   });
 }
 
 function bar(value, max, className) {
-  if (value === null || max === null || max <= 0) return `<div class="bar ${className}"></div>`;
+  if (value == null || max == null || !(max > 0)) return `<div class="bar ${className}"></div>`;
   const width = Math.max(0, Math.min(100, (100 * value) / max));
   return `<div class="bar ${className}"><span style="width:${width}%"></span></div>`;
 }
@@ -260,15 +301,28 @@ function renderRoster() {
     roster.innerHTML = `<p class="unavailable">No players for this squad at this time.</p>`;
     return;
   }
-  roster.innerHTML = players.map((player) => `
-    <article class="player">
-      <header><strong>${textOrUnknown(player.name)}</strong><span>${textOrUnknown(player.status)}</span></header>
-      <div>Health ${textOrUnknown(player.health)} / ${textOrUnknown(player.healthMax)}</div>
-      ${bar(player.health, player.healthMax, "hp")}
-      <div>Shields ${textOrUnknown(player.shields)} / ${textOrUnknown(player.shieldMax)}</div>
-      ${bar(player.shields, player.shieldMax, "sh")}
+  const squadOut = (frame.eliminated_squads || {})[team];
+  roster.innerHTML = players.map((player) => {
+    // Display only: a confirmed-eliminated player shows 0 health and shields
+    // with their maximums kept. Telemetry and model inputs are unchanged.
+    // Downed players and "dead" (respawnable) players show their telemetry.
+    const playerOut = player.status === "eliminated";
+    const zeroed = (playerOut || squadOut != null) && player.status !== "downed";
+    const health = zeroed ? 0 : player.health;
+    const shields = zeroed ? 0 : player.shields;
+    const status = !playerOut && zeroed
+      ? `${textOrUnknown(player.status)} · squad eliminated at ${mmss(squadOut - replayStart())}`
+      : textOrUnknown(player.status);
+    return `
+    <article class="player${zeroed ? " out" : ""}">
+      <header><strong>${textOrUnknown(player.name)}</strong><span>${status}</span></header>
+      <div>Health ${textOrUnknown(health)} / ${textOrUnknown(player.healthMax)}</div>
+      ${bar(health, player.healthMax, "hp")}
+      <div>Shields ${textOrUnknown(shields)} / ${textOrUnknown(player.shieldMax)}</div>
+      ${bar(shields, player.shieldMax, "sh")}
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 // Predictions are made at every replay second before the cut-off, at the same
@@ -278,7 +332,7 @@ function probabilityTable(squads, valueKey, valueLabel, baselineKey) {
   const rows = [...squads]
     .sort((a, b) => b[valueKey] - a[valueKey])
     .map((squad) => `<tr class="${String(squad.teamId) === team ? "selected" : ""} ${squad.eliminated ? "out" : ""}">
-        <td>${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</td>
+        <td><button type="button" class="squad-name" data-team-id="${esc(squad.teamId)}">${textOrUnknown(squad.team_name)}${squad.eliminated ? " · eliminated" : ""}</button></td>
         <td class="num">${pct(squad[valueKey])}</td>
         ${baselineKey ? `<td class="num">${pct(squad[baselineKey])}</td>` : ""}
       </tr>`).join("");
@@ -394,9 +448,226 @@ function renderEvaluation(evaluation) {
   `;
 }
 
+// One list per prediction kind. A click sets the slider, then uses the same
+// seek() path as dragging it, so the map, roster, ring, and both probability
+// panels stay on that second.
+function points(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "unknown";
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+}
+
+function kindName(kind) {
+  if (kind === "held_out") return "held-out";
+  if (kind === "final_model_fitted") return "final model, fitted on these games";
+  return kind || "unknown model";
+}
+
+function rangeLine(label, startElapsed, endElapsed, startT, endT, extra) {
+  const clock = startElapsed == null || endElapsed == null ? "time unknown" : `${mmss(startElapsed)}–${mmss(endElapsed)}`;
+  const replay = startT == null || endT == null ? "" : ` · replay t ${startT}–${endT}`;
+  return `<span class="line"><span class="tag">${esc(label)}</span> ${clock}${extra}${replay}</span>`;
+}
+
+function eventElapsed(item, event) {
+  if (event.elapsed != null && Number.isFinite(Number(event.elapsed))) return Number(event.elapsed);
+  if (item.start_elapsed == null || item.start_t == null || event.t == null) return null;
+  return Number(item.start_elapsed) + (Number(event.t) - Number(item.start_t));
+}
+
+function eventLine(item, event) {
+  const elapsed = eventElapsed(item, event);
+  const types = { knock: "knock", revive: "revive", squad_elimination: "squad elimination", respawn: "respawn" };
+  const sides = { squad: "this squad", opponent: "other squads", unattributed: "unattributed" };
+  const actor = event.actor_name || "";
+  const victim = event.victim_name || "";
+  const who = actor && victim ? `${actor} → ${victim}` : actor || victim;
+  const when = elapsed == null ? "time unknown" : mmss(elapsed);
+  return `<span class="line">${when} · ${esc(types[event.type] || event.type || "event")} · ${esc(sides[event.side] || event.side || "unattributed")}${who ? ` · ${esc(who)}` : ""}</span>`;
+}
+
+function highlightCard(item) {
+  const direction = item.direction === "down" ? "decrease" : item.direction === "up" ? "increase" : "change";
+  const prov = item.provenance || {};
+  const full = typeof prov.sha256 === "string" ? prov.sha256 : "";
+  const windows = Number(item.windows_merged);
+  const windowExtra = Number.isFinite(Number(item.window_s)) ? ` · ${Number(item.window_s)} seconds` : "";
+  const episodeExtra = Number.isFinite(windows) ? ` · ${windows} overlapping window${windows === 1 ? "" : "s"}` : "";
+  const events = (Array.isArray(item.events) ? item.events : []).map((event) => eventLine(item, event)).join("");
+  const elapsed = item.seek && item.seek.elapsed;
+  const clickable = elapsed != null && Number.isFinite(Number(elapsed));
+  const open = clickable
+    ? `<button type="button" class="highlight" data-elapsed="${Number(elapsed)}">`
+    : `<div class="highlight">`;
+  return `${open}
+    <strong>${esc(item.squad_name || "Squad")} · ${direction} ${points(item.change_pp)} percentage points</strong>
+    ${rangeLine("Representative window", item.start_elapsed, item.end_elapsed, item.start_t, item.end_t, windowExtra)}
+    <span class="line">Before ${pct(item.before)} → after ${pct(item.after)}</span>
+    ${rangeLine("Full episode", item.episode_start_elapsed, item.episode_end_elapsed, item.episode_start_t, item.episode_end_t, episodeExtra)}
+    <span class="line when" title="${esc(full)}">${esc(kindName(item.prediction_kind))} · ${esc(prov.file || "model file unknown")} · sha256 ${esc(full.slice(0, 12) || "unknown")}</span>
+    <span class="line">Coincident events in the representative window</span>
+    <span class="line when">${esc(item.description || "")}</span>
+    ${events}
+  ${clickable ? "</button>" : "</div>"}`;
+}
+
+// A downward card gets a "Review decision" button beside it (not inside it).
+function reviewRow(index) {
+  return `<div class="review-row"><button type="button" class="action quiet" data-review="${index}">Review decision</button></div>`;
+}
+
+function renderHighlights(box, result) {
+  try {
+    if (!result.ok || !result.body) {
+      const status = result.status ? ` (HTTP ${result.status})` : "";
+      const reason = result.body && (result.body.error || (result.body.missing || []).join("; "));
+      box.innerHTML = `<p class="unavailable">Could not load these highlights${status}.</p>${reason ? `<p>${esc(reason)}</p>` : ""}`;
+      return;
+    }
+    const data = result.body;
+    if (data.available !== true) {
+      const reasons = (data.missing || []).map((item) => `<p>${esc(item)}</p>`).join("");
+      const fallback = data.error ? `<p>${esc(data.error)}</p>` : "";
+      box.innerHTML = `<p class="unavailable">Not available</p>${reasons || fallback}`;
+      return;
+    }
+    const up = Array.isArray(data.up) ? data.up : [];
+    const down = Array.isArray(data.down) ? data.down : [];
+    const label = esc(data.label || "Largest changes in model estimate.");
+    if (!up.length && !down.length) {
+      box.innerHTML = `<p><strong>${label}</strong></p><p>No move of 5 percentage points or more for this squad. A window is kept only when every replay second in it has a prediction. The recorded result is not included.</p>`;
+      return;
+    }
+    const section = (title, items, review) => items.length
+      ? `<h3>${title}</h3>${items.map((item, i) => highlightCard(item) + (review ? reviewRow(i) : "")).join("")}`
+      : "";
+    box.downItems = down;
+    box.innerHTML = `<p><strong>${label}</strong></p>
+      <p class="when">Click a row to move the slider to the start of that representative window. The change is in the model estimate. Listed events are coincident with the representative window, not a cause, and not the rest of the episode. The recorded result is not included.</p>
+      ${section("Increases", up)}
+      ${section("Decreases", down, Boolean(window.DecisionReview))}`;
+  } catch (error) {
+    box.innerHTML = `<p class="unavailable">Could not load these highlights.</p>`;
+    console.error(error);
+  }
+}
+
+async function fetchHighlights(gameId, kind, team) {
+  const url = `/api/matches/${gameId}/highlights?kind=${encodeURIComponent(kind)}&team=${encodeURIComponent(team)}`;
+  try {
+    const response = await fetch(url);
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (error) {
+      body = null;
+    }
+    return { ok: response.ok, status: response.status, body };
+  } catch (error) {
+    return { ok: false, status: 0, body: null };
+  }
+}
+
+async function loadOneHighlight(box, kind, token, gameId, team) {
+  const result = await fetchHighlights(gameId, kind, team);
+  if (token !== highlightToken) return;
+  renderHighlights(box, result);
+}
+
+function loadHighlights() {
+  if (!summary) return;
+  const token = ++highlightToken;
+  const gameId = summary.game_id;
+  const team = selectedTeam();
+  heldoutHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  finalHighlights.innerHTML = `<p class="when">Loading…</p>`;
+  loadOneHighlight(heldoutHighlights, "held_out", token, gameId, team);
+  loadOneHighlight(finalHighlights, "final_model_fitted", token, gameId, team);
+}
+
+function seekHighlight(elapsed) {
+  const numeric = Number(elapsed);
+  if (!Number.isFinite(numeric)) return;
+  timeInput.value = String(numeric);
+  seek(Number(timeInput.value));
+}
+
+for (const box of [heldoutHighlights, finalHighlights]) {
+  box.addEventListener("click", (event) => {
+    const review = event.target.closest("button[data-review]");
+    if (review && box.contains(review)) {
+      const item = (box.downItems || [])[Number(review.dataset.review)];
+      if (item && window.DecisionReview) safely(() => window.DecisionReview.open(item));
+      return;
+    }
+    const button = event.target.closest("button.highlight");
+    if (!button || !box.contains(button) || button.dataset.elapsed === "") return;
+    seekHighlight(button.dataset.elapsed);
+  });
+}
+
+// Map dots, probability tables, and the squad dropdown share this path.
+// It does not seek, reset the map camera, or request an AI review.
+function applySquadSelection() {
+  loadHighlights();
+  if (!frame) return;
+  draw();
+  renderRoster();
+  renderPredictions();
+  loadTactical();
+  if (window.Coach) safely(() => window.Coach.update());
+  if (window.DecisionReview) safely(() => window.DecisionReview.update());
+}
+
+let selectionScroll = null;
+
+function selectSquad(teamId) {
+  const id = String(teamId);
+  if (![...squadSelect.options].some((option) => option.value === id)) return;
+  const x = selectionScroll ? selectionScroll.x : window.scrollX;
+  const y = selectionScroll ? selectionScroll.y : window.scrollY;
+  selectionScroll = null;
+  const changed = squadSelect.value !== id;
+  squadSelect.value = id;
+  if (changed) applySquadSelection();
+  const restore = () => window.scrollTo(x, y);
+  restore();
+  requestAnimationFrame(restore);
+}
+
+window.ApexMap.onSelect = selectSquad;
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
-squadSelect.addEventListener("change", () => { if (!frame) return; draw(); renderRoster(); renderPredictions(); });
+squadSelect.addEventListener("change", applySquadSelection);
+for (const box of [heldoutBox, curveBox]) {
+  if (!box) continue;
+  box.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("button.squad-name");
+    if (!button || !box.contains(button)) return;
+    selectionScroll = { x: window.scrollX, y: window.scrollY };
+    if (event.pointerType !== "mouse") return;
+    event.preventDefault();
+  });
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button.squad-name");
+    if (!button || !box.contains(button)) return;
+    selectSquad(button.dataset.teamId);
+  });
+}
 timeInput.addEventListener("input", () => seek(Number(timeInput.value)));
+// The AI review asks for the moment on screen when clicked, and seeks through
+// the same path as the highlights.
+function currentMoment() {
+  return summary && frame ? {
+    game: summary.game_id,
+    t: frame.t,
+    elapsed: frame.elapsed,
+    start: replayStart(),
+    team: selectedTeam(),
+    squadName: squadSelect.selectedOptions[0] ? squadSelect.selectedOptions[0].textContent : selectedTeam(),
+  } : null;
+}
+if (window.Coach) safely(() => window.Coach.init({ context: currentMoment, seek: seekHighlight }));
+if (window.DecisionReview) safely(() => window.DecisionReview.init({ context: currentMoment, seek: seekHighlight, redraw: () => { if (frame) draw(); } }));
 loadBackend();
 loadMatches();
