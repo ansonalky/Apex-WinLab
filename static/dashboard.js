@@ -30,10 +30,6 @@ let mapConfig = null;
 let currentRing = null;
 let requestToken = 0;
 let activeLoad = null;
-// Confirmed in the local replay: team 20 is EQT, both alive at 18:47, NAGGI downed at 18:48.
-const START_GAME = "123633";
-const START_TEAM = "20";
-const START_ELAPSED = 18 * 60 + 47;
 // At most one frame request runs at a time. Slider input that arrives while
 // it runs only replaces pendingSeek, so a fast scrub asks for its newest value
 // next and skips the ones in between.
@@ -252,90 +248,118 @@ function linkedSliderTime(gameId) {
   return Number(raw);
 }
 
-function rememberStartLink() {
-  const params = new URLSearchParams(location.search);
-  params.set("game", START_GAME);
-  params.set("team", START_TEAM);
-  params.set("t", String(START_ELAPSED));
-  history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
+// Explicit review action for the currently selected match and squad.
+let keyMomentRun = null;
+let keyMomentEpoch = 0;
+let keyMomentReviewStarted = false;
+let keyMomentController = null;
+function offerManualAnalysis(show) {
+  const button = document.querySelector("#key-moment-manual");
+  if (button) button.hidden = !show;
 }
-
-// A demo click explicitly authorizes one review, only after replay synchronization.
-let demoRun = null;
-let demoEpoch = 0;
-let demoReviewStarted = false;
-function cancelDemo() {
-  if (!demoRun || demoReviewStarted) return;
-  demoEpoch += 1;
-  setStartStatus("Demo cancelled because the selection changed.");
+function cancelKeyMoment() {
+  offerManualAnalysis(false);
+  if (!keyMomentRun) { setStartStatus(""); return; }
+  if (keyMomentReviewStarted) return;
+  keyMomentEpoch += 1;
+  if (keyMomentController) keyMomentController.abort();
+  setStartStatus("Review setup cancelled because the selection changed.");
 }
-function demoMomentConfirmed() {
-  return summary && String(summary.game_id) === START_GAME && matchSelect.value === START_GAME
-    && selectedTeam() === START_TEAM && Number(timeInput.value) === START_ELAPSED
-    && frame && frame.elapsed === START_ELAPSED && frame.t === replayStart() + START_ELAPSED;
+function waitForKeyMoment(signal) {
+  return new Promise((resolve) => {
+    const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+    const timer = setTimeout(finish, 1200);
+    if (signal.aborted) finish();
+    else signal.addEventListener("abort", finish, { once: true });
+  });
 }
-function startHere() {
-  if (demoRun) return demoRun;
-  const mine = ++demoEpoch;
-  demoReviewStarted = false;
+function reviewKeyMoment() {
+  if (keyMomentRun) return keyMomentRun;
+  const game = String(matchSelect.value), team = selectedTeam();
+  const mine = ++keyMomentEpoch;
+  keyMomentReviewStarted = false;
+  keyMomentController = new AbortController();
+  const signal = keyMomentController.signal;
   const button = document.querySelector("#start-here");
   if (button) button.disabled = true;
+  offerManualAnalysis(false);
   showStartHint();
-  setStartStatus("Loading demo…");
-  const current = () => mine === demoEpoch;
-  demoRun = Promise.resolve().then(async () => {
+  setStartStatus("Finding a review moment…");
+  const current = () => mine === keyMomentEpoch && !signal.aborted
+    && String(matchSelect.value) === game && selectedTeam() === team;
+  keyMomentRun = Promise.resolve().then(async () => {
     try {
+      if (activeLoad) await activeLoad;
       if (!current()) return;
-      if (![...matchSelect.options].some((option) => option.value === START_GAME)) throw new Error("Demo match 123633 is not available.");
-      rememberStartLink();
-      const ready = summary && String(summary.game_id) === START_GAME && !timeInput.disabled;
-      if (!ready) {
-        if (activeLoad && matchSelect.value === START_GAME) await activeLoad;
-        else { matchSelect.value = START_GAME; await loadMatch(START_GAME, { demo: true }); }
+      if (!summary || String(summary.game_id) !== game || timeInput.disabled || !team) throw new Error("Wait for the selected match and squad to finish loading, then try again.");
+      const kind = primaryKind();
+      let result;
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        result = await fetchHighlights(game, kind, team, signal);
+        if (!current()) return;
+        if (!result.body || result.body.status !== "loading") break;
+        await waitForKeyMoment(signal);
       }
       if (!current()) return;
-      if (!summary || String(summary.game_id) !== START_GAME) throw new Error("Demo match 123633 could not be loaded.");
-      if (![...squadSelect.options].some((option) => option.value === START_TEAM)) throw new Error("EQT (team 20) is not in this match.");
-      if (Number(timeInput.max) < START_ELAPSED) throw new Error("18:47 is outside this replay.");
-      squadSelect.value = START_TEAM;
-      applySquadSelection({ demo: true });
-      timeInput.value = String(START_ELAPSED);
-      await seek(START_ELAPSED, { demo: true });
+      if (!result || !result.ok || !result.body || result.body.available !== true) throw new Error("Key moments could not be loaded. Try again or analyze the current situation.");
+      const down = (Array.isArray(result.body.down) ? result.body.down : []).filter((item) =>
+        Number.isFinite(item.change_pp) && item.change_pp < 0
+        && (item.squad_id == null || String(item.squad_id) === team)
+        && (item.prediction_kind == null || item.prediction_kind === kind)
+        && (!item.seek || item.seek.game_id == null || String(item.seek.game_id) === game));
+      // Use the existing detector's ranking metric; do not recompute predictions.
+      const item = down.reduce((best, row) => !best || row.change_pp < best.change_pp ? row : best, null);
+      if (!item) {
+        setStartStatus("No review moment found for this squad");
+        offerManualAnalysis(true);
+        return;
+      }
+      if (!window.DecisionReview || !window.DecisionReview.start) throw new Error("Decision review is unavailable. Reload and try again.");
+      const elapsed = window.DecisionReview.open(item);
+      if (!Number.isFinite(elapsed)) throw new Error("Another decision review is running, or this episode has no valid review time.");
+      if (elapsed < 0 || elapsed > Number(timeInput.max)) throw new Error("The suggested decision time is outside this replay.");
+      timeInput.value = String(elapsed);
+      await seek(elapsed, { keyMoment: true });
       if (!current()) return;
-      if (!demoMomentConfirmed()) throw new Error("The demo frame could not be synchronized. Try Start demo again.");
-      const game = summary.game_id, t = frame.t;
+      const t = replayStart() + elapsed;
+      const synchronized = () => current() && summary && String(summary.game_id) === game
+        && frame && frame.t === t && frame.elapsed === elapsed && Number(timeInput.value) === elapsed;
+      if (!synchronized()) throw new Error("The decision frame could not be synchronized. Try again.");
       clearTimeout(tacticalTimer);
       const [verifiedRing, tactical] = await Promise.all([
-        getJSON(`/api/matches/${game}/ring?t=${t}`),
-        window.Tactical ? window.Tactical.load(game, t, START_TEAM, summary.squads) : null,
+        getJSON(`/api/matches/${game}/ring?t=${t}`, { signal }),
+        window.Tactical ? window.Tactical.load(game, t, team, summary.squads) : null,
         syncTimeline(),
       ]);
-      if (!current() || !demoMomentConfirmed()) return;
-      if (verifiedRing.t !== t) throw new Error("The ring response did not match the demo second.");
-      // Always replace earlier geometry, including with a final-ring unavailable state.
+      if (!synchronized()) return;
+      if (verifiedRing.t !== t || !tactical || tactical.t !== t || String(tactical.team) !== team) throw new Error("The replay panels could not be synchronized. Try again.");
       frame.ring = verifiedRing;
       currentRing = verifiedRing;
       draw();
-      if (!tactical || tactical.t !== t || String(tactical.team) !== START_TEAM) throw new Error("The tactical panel could not be synchronized. Try Start demo again.");
-      if (!window.Coach || !window.Coach.start) throw new Error("The coach is unavailable. Try again after reloading.");
-      demoReviewStarted = true;
-      setStartStatus("Loading the EQT review for 18:47…");
-      const started = await window.Coach.start({ game, team: START_TEAM, t });
-      if (started === false) throw new Error("Another review is running or the selection changed. Try Start demo again when it finishes.");
-      setStartStatus(demoMomentConfirmed() ? "" : "The demo review is for EQT at 18:47; the current selection has changed.");
+      const squad = (summary.squads || []).find((row) => String(row.teamId) === team);
+      const name = squad && squad.teamName || team;
+      setStartStatus(`Reviewing ${name} at ${mmss(elapsed)}.`);
+      keyMomentReviewStarted = true;
+      const started = await window.DecisionReview.start({ game, team, t });
+      if (started === false) throw new Error("Another decision review is running or the selection changed. Try again when it finishes.");
+      setStartStatus(synchronized() ? `Reviewing ${name} at ${mmss(elapsed)}.` : `The review is for ${name} at ${mmss(elapsed)}; the current selection has changed.`);
     } catch (error) {
-      if (current()) setStartStatus(error.message || "The demo could not be loaded. Try again.", true);
+      if (current()) {
+        setStartStatus(error.message || "The review moment could not be loaded. Try again.", true);
+        offerManualAnalysis(true);
+      }
     } finally {
-      demoRun = null;
-      demoReviewStarted = false;
+      keyMomentRun = null;
+      keyMomentReviewStarted = false;
+      keyMomentController = null;
       if (button) button.disabled = false;
     }
   });
-  return demoRun;
+  return keyMomentRun;
 }
 
 async function loadMatch(gameId, options = {}) {
-  if (!options.demo) cancelDemo();
+  if (!options.keyMoment) cancelKeyMoment();
   const run = loadMatchBody(gameId);
   activeLoad = run;
   try {
@@ -426,14 +450,13 @@ async function loadMatchBody(gameId) {
   if (requestedTime != null && requestedTime > maxElapsed) {
     setStartStatus(`That time is past the end of this replay. Showing ${mmss(initialElapsed)}.`);
   }
-  if (String(gameId) === START_GAME && squadSelect.value === START_TEAM && initialElapsed === START_ELAPSED) showStartHint();
   await loadFrame(initialElapsed);
 }
 
 // The selected time shows at once; the displayed frame's own time is labeled
 // separately until the response for the selection arrives.
 function seek(elapsed, options = {}) {
-  if (!options.demo) cancelDemo();
+  if (!options.keyMoment) cancelKeyMoment();
   if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
   clock.textContent = mmss(elapsed);
   shown.textContent = frame ? `loading · showing ${mmss(frame.elapsed)}` : "loading";
@@ -1100,10 +1123,10 @@ function renderHighlightList(box, result) {
   }
 }
 
-async function fetchHighlights(gameId, kind, team) {
+async function fetchHighlights(gameId, kind, team, signal) {
   const url = `/api/matches/${gameId}/highlights?kind=${encodeURIComponent(kind)}&team=${encodeURIComponent(team)}`;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal });
     let body = null;
     try {
       body = await response.json();
@@ -1205,7 +1228,7 @@ altHighlights.addEventListener("click", (event) => {
 // Map dots, probability tables, and the squad dropdown share this path.
 // It does not seek, reset the map camera, or request an AI review.
 function applySquadSelection(options = {}) {
-  if (!options.demo) cancelDemo();
+  if (!options.keyMoment) cancelKeyMoment();
   if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
   if (window.EventTimeline) window.EventTimeline.reset();
   loadHighlights();
@@ -1250,15 +1273,11 @@ window.ApexMap.onSelect = selectSquad;
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
 const startButton = document.querySelector("#start-here");
-if (startButton) {
-  startButton.addEventListener("click", () => {
-    startHere().catch((error) => {
-      console.error(error);
-      timeInput.disabled = false;
-      setStartStatus("Demo match 123633 could not be loaded.", true);
-    });
-  });
-}
+if (startButton) startButton.addEventListener("click", reviewKeyMoment);
+const manualAnalysisButton = document.querySelector("#key-moment-manual");
+if (manualAnalysisButton) manualAnalysisButton.addEventListener("click", () => {
+  if (window.Coach) window.Coach.start(currentMoment());
+});
 squadSelect.addEventListener("change", applySquadSelection);
 for (const box of [estimateBox, provenanceBox, altBox]) {
   box.addEventListener("pointerdown", (event) => {
@@ -1391,7 +1410,7 @@ document.querySelector("#open-match").addEventListener("submit", (event) => {
 // Help bubbles: hover and keyboard focus show them, click or tap pins them,
 // and Escape dismisses. The bubble stays open while the pointer moves into it.
 function installHelp() {
-  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #event-timeline, #coach-run, .topbar a, .topbar h1";
+  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #key-moment-manual, #event-timeline, #coach-run, .topbar a, .topbar h1";
   let hideTimer = null;
 
   function bubbleOf(help) { return help.querySelector(".help-bubble"); }

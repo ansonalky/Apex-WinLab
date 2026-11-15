@@ -345,10 +345,24 @@ window.DecisionReview = (() => {
     const elapsed = readTime();
     if (elapsed === null) return;
     seekTo(elapsed);
-    run({
-      game: state.game, team: state.team, squadName: state.squadName, kind: state.kind, elapsed,
-      start_t: state.item.start_t, episode_start_t: state.item.episode_start_t, decision_t: state.start + elapsed,
-    });
+    run(reviewRequest(elapsed));
+  }
+
+  function reviewRequest(elapsed) {
+    return { game: state.game, team: state.team, squadName: state.squadName, kind: state.kind, elapsed,
+      start_t: state.item.start_t, episode_start_t: state.item.episode_start_t, decision_t: state.start + elapsed };
+  }
+
+  // The key-moment action has already sought and synchronized the replay.
+  async function start(expected) {
+    if (running || !state) return false;
+    const now = context();
+    if (!now || String(now.game) !== String(expected.game) || String(now.team) !== String(expected.team)
+      || now.t !== expected.t || String(state.game) !== String(expected.game) || String(state.team) !== String(expected.team)) return false;
+    const elapsed = readTime();
+    if (elapsed === null || state.start + elapsed !== expected.t) return false;
+    await run(reviewRequest(elapsed));
+    return true;
   }
 
   function open(item) {
@@ -357,7 +371,10 @@ window.DecisionReview = (() => {
     if (!now || !box) return;
     token += 1;
     result = null;
-    const suggested = Math.max(0, Number(item.episode_start_elapsed) - LEAD_S);
+    if (!Number.isFinite(item.episode_start_elapsed) || !Number.isFinite(item.episode_end_elapsed)
+      || item.episode_start_elapsed < 0 || item.episode_end_elapsed <= item.episode_start_elapsed) return;
+    if (item.squad_id != null && String(item.squad_id) !== String(now.team)) return;
+    const suggested = Math.max(0, item.episode_start_elapsed - LEAD_S);
     state = {
       game: now.game, team: String(item.squad_id ?? now.team), squadName: item.squad_name || now.squadName,
       kind: item.prediction_kind, item, start: now.start, decisionElapsed: suggested, suggestedElapsed: suggested,
@@ -367,6 +384,7 @@ window.DecisionReview = (() => {
     render(`<p class="when">Nothing has been requested. Adjust the decision time if needed, then click “Review decision”.</p>`);
     redraw();
     box.scrollIntoView({ behavior: "smooth", block: "start" });
+    return suggested;
   }
 
   box && box.addEventListener("click", (event) => {
@@ -412,5 +430,5 @@ window.DecisionReview = (() => {
     if (box) box.innerHTML = `<p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p>`;
   }
 
-  return { init, open, update, reset, markers };
+  return { init, open, start, update, reset, markers };
 })();
