@@ -18,7 +18,9 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -69,8 +71,55 @@ def _leaf(row: dict, *path: str) -> Any:
     return value
 
 
+def numeric_quality(value: Any) -> Decimal | None:
+    """The stored quality number. Display text and non-numbers are not used."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, Decimal):
+        number = value
+    elif isinstance(value, int):
+        number = Decimal(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return None
+    else:
+        return None
+    if not number.is_finite():
+        return None
+    return number
+
+
+def _game_id_number(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return None
+
+
+def sort_matches(rows: list[dict]) -> list[dict]:
+    """Highest stored quality first. Missing quality last. Ties by game id descending."""
+    def key(item: dict) -> tuple:
+        quality = numeric_quality(item.get("quality_score"))
+        game_id = _game_id_number(item.get("game_id"))
+        return (
+            quality is None,
+            -(quality if quality is not None else Decimal(0)),
+            game_id is None,
+            -(game_id if game_id is not None else 0),
+        )
+
+    return sorted(rows, key=key)
+
+
 def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
-    """Accepted games only, oldest ``match_start`` first.
+    """Accepted games only, highest stored quality first.
 
     ``split_of`` maps game id to its frozen split (train, validation, test);
     ``heldout`` is true only for test games with a valid bundle.
@@ -103,8 +152,7 @@ def list_matches(data_dir: Path, split_of: dict | None = None) -> list[dict]:
                 "heldout": split_of.get(record.get("game_id")) == "test",
             }
         )
-    rows.sort(key=lambda item: ((item["match_start"] is None), item["match_start"] or 0, str(item["game_id"])))
-    return rows
+    return sort_matches(rows)
 
 
 def _record(data_dir: Path, game_id: int) -> dict | None:

@@ -27,7 +27,6 @@ SELECT m.game_id, m.session_id, m.event, m.map_name, m.quality_score, m.organize
        m.match_start, m.evaluation_split, m.winner_team_id, m.winner_team_name, m.winner_label_source,
        EXISTS (SELECT 1 FROM squad_estimates e WHERE e.game_id = m.game_id AND e.prediction_kind = 'held_out')
 FROM matches m
-ORDER BY m.match_start NULLS LAST, m.game_id
 """
 
 MATCH = """
@@ -158,7 +157,9 @@ class TigerReader:
     def list_matches(self) -> list[dict]:
         with self._connection() as connection:
             rows = connection.execute(LIST_MATCHES).fetchall()
-        return [
+        from dashboard_data import sort_matches
+
+        return sort_matches([
             {
                 "game_id": row[0],
                 "session_id": row[1],
@@ -172,7 +173,7 @@ class TigerReader:
                 "heldout": bool(row[11]),
             }
             for row in rows
-        ]
+        ])
 
     def match(self, game_id: int) -> dict | None:
         with self._connection() as connection:
