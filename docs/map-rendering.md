@@ -10,15 +10,28 @@ player positions.
 coordinate. Radius is `1024 * (radius / size.x)` and is not truncated.
 The image is the 2048 view: `/maps_2048/<telemetry map id>.webp`.
 
-Orange shading follows the current safe boundary: during closing it interpolates
-from the revealed stage's start circle to its end circle. While waiting, it
-holds the last completed boundary. The white outline shows the closing target,
-then switches at closure to the immediately next stage's target **if that live
-entry was already revealed by the displayed second**, including countdowns.
-Unknown targets and incomplete final rings have no white outline. Neither the
-completed replay's final state nor its t=0 planned schedule supplies geometry.
-The map-only reader handles early reveals without changing prediction features
-or the tactical/coach ring reader. Numbering still uses the shared ring labels.
+Orange shading stays outside the actual current safe boundary. The active
+closing destination has a translucent gray **disc** fill, and the immediately
+following destination has a dashed white outline. All shading is drawn before
+players and labels using the same map projection. Countdown geometry is fixed;
+only the current boundary interpolates during closing. At closure, the gray and
+dashed roles advance by one stage without skipping or duplicating destinations.
+
+The default view uses only entries revealed by the displayed second. Missing or
+invalid destinations are omitted, including incomplete final rings. A following
+circle is never synthesized by copying the gray circle.
+
+The optional **Observer ring preview** toggle starts off. Its **Observer preview**
+badge explains: “Shows recorded future rings; players may not have known them.”
+Only this mode may use valid future geometry from the schedule recorded in the
+state at the displayed second (including the t=0 plan). Later schedule revisions
+are not projected backward. A separate map endpoint and index serve this data;
+no observer geometry is attached to prediction inputs, tactical evidence, or
+coach packets. Toggling it off immediately restores causal rings.
+
+The styling was compared with the supplied ring-closing and ring-countdown
+reference images: gray marks the active destination and dashed white the
+following destination, rather than drawing an annular band.
 
 Cached images, all 2048×2048, from `https://overstat.gg/maps_2048/`:
 

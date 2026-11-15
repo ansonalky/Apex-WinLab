@@ -6,6 +6,7 @@
   <title>Apex WinLab</title>
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/timeline.css">
+  <link rel="stylesheet" href="/static/observer_ring.css">
 </head>
 <body>
   <header class="topbar">
@@ -54,8 +55,13 @@
   <p id="coord-note" class="note" hidden></p>
   <div class="layout">
     <div>
+    <div class="observer-ring-controls">
+      <label title="Shows recorded future rings; players may not have known them."><input type="checkbox" id="observer-ring" aria-describedby="observer-ring-explanation"> Observer ring preview</label>
+      <span id="observer-ring-badge" class="observer-ring-badge" title="Shows recorded future rings; players may not have known them." hidden>Observer preview</span>
+      <span id="observer-ring-explanation" class="sr-only">Shows recorded future rings; players may not have known them.</span>
+      <span id="observer-ring-status" role="status"></span>
+    </div>
     <canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas>
-    <p id="ring-status" class="meta"></p>
     <div id="event-timeline" class="event-timeline" hidden></div>
   </div>
     <div class="side">
@@ -112,6 +118,7 @@
   <script src="/static/coach.js"></script>
   <script src="/static/decision.js"></script>
   <script src="/static/timeline.js"></script>
+  <script src="/static/observer_ring.js"></script>
   <script src="/static/dashboard.js"></script>
 </body>
 </html>

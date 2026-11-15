@@ -33,7 +33,7 @@ from features import STANDING
 from overstat_patch import _leaf, apply_frame, export_players, frame_entries, initial_state
 from event_timeline import display_feed, markers_for_team, ring_span
 from ring_features import live_entries, ring_at
-from ring_overlay import overlay_geometry
+from ring_overlay import overlay_geometry, following_destination
 from ring_label import LAST_CLOSED, ring_label
 from turning_points import recorded_events
 
@@ -254,6 +254,7 @@ class TacticalIndex:
                 "ring": ring,
                 # Map only; the coach and tactical measurements read "ring".
                 "ring_target": target,
+                "map_following_target": following_destination(entries, target),
                 "map_ring": map_ring,
                 "map_ring_waiting_convention": waiting_convention,
                 "phase": state.get("state"),
@@ -300,6 +301,8 @@ class TacticalIndex:
             "t": t,
             "location": {"x": ring["center"][0], "y": ring["center"][1], "r": ring["radius"]} if known else None,
             "target": second.get("ring_target"),
+            "following_target": second.get("map_following_target"),
+            "observer_preview": False,
             "countdown_s": ring.get("closing_remaining_s"),
             **ring_label(ring.get("phase"), ring.get("stage"), second.get("map_ring_waiting_convention", LAST_CLOSED)),
         }

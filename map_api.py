@@ -31,4 +31,12 @@ def ring_route(game_id: int):
         t = int(request.args["t"])
     except (KeyError, ValueError):
         return jsonify({"error": "t is required"}), 400
+    if request.args.get("observer") == "1":
+        from observer_ring import ObserverRingIndex
+
+        index = current_app.config.get("OBSERVER_RINGS")
+        if index is None:
+            index = ObserverRingIndex(current_app.config["TACTICAL"].data_dir)
+            current_app.config["OBSERVER_RINGS"] = index
+        return jsonify(index.at(game_id, t))
     return jsonify(ring_at(game_id, t))

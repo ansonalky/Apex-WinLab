@@ -56,8 +56,6 @@ function paint(view) {
     ctx.font = "16px sans-serif";
     const message = (mapConfig && mapConfig.message) || "Map configuration is not loaded.";
     wrap(ctx, message, 24, 40, Math.max(120, css.width - 170), 22);
-    const hud = document.querySelector("#ring-status");
-    if (hud) hud.textContent = `Slider ${formatClock(frame.elapsed)} · map background unavailable, ring not drawn`;
     return;
   }
   const box = contain(css.width, css.height, 2048, 2048);
@@ -136,8 +134,6 @@ function paint(view) {
     ctx.fillText(marker.label || "", mx + 14, my + 22);
     ctx.restore();
   }
-  const hud = document.querySelector("#ring-status");
-  if (hud) hud.textContent = `Map and ring at slider ${formatClock(frame.elapsed)} · ${ringText(ring)} · ${camera.zoom.toFixed(1)}×`;
 }
 
 function bind(canvas) {
@@ -423,16 +419,15 @@ function mapCordR(value, spec) {
   return 1024 * (value / spec.x);
 }
 
-// The ring under the players, through the same project()/radius() as every
-// mark, so zoom and pan move it with the map. Outside the current boundary is
-// shaded orange; the boundary itself has no outline. The circle it is closing
-// toward is a thin white outline, drawn whenever the causal map snapshot sends
-// a revealed target, including a waiting/countdown phase. Unknown targets and
-// incomplete final rings have no outline; the renderer never reads a schedule.
+// All three circles share the map projection. Draw them before player markers.
+// Gray is a filled destination, never an annular band. Dashed white is the
+// following destination; it must never reuse the gray circle's geometry.
 const RING_RADIUS_MAX = 100000;
 function drawRing(ctx, ring, project, radius, map) {
+  const valid = (circle) => circle && Number.isFinite(circle.x) && Number.isFinite(circle.y)
+    && Number.isFinite(circle.r) && circle.r >= 0 && circle.r < RING_RADIUS_MAX;
   const location = ring && ring.location;
-  if (location && location.r < RING_RADIUS_MAX) {
+  if (valid(location)) {
     const [cx, cy] = project(location.x, location.y);
     ctx.save();
     ctx.fillStyle = "rgba(214, 64, 28, 0.4)";
@@ -443,26 +438,27 @@ function drawRing(ctx, ring, project, radius, map) {
     ctx.restore();
   }
   const target = ring && ring.target;
-  if (target && Number.isFinite(target.x) && Number.isFinite(target.y) && Number.isFinite(target.r) && target.r < RING_RADIUS_MAX) {
+  if (valid(target)) {
     const [tx, ty] = project(target.x, target.y);
     ctx.save();
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 1.25;
+    ctx.fillStyle = "rgba(205, 205, 205, 0.12)";
     ctx.beginPath();
     ctx.arc(tx, ty, radius(target.r), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  const following = ring && ring.following_target;
+  if (valid(following)) {
+    const [tx, ty] = project(following.x, following.y);
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.arc(tx, ty, radius(following.r), 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
-}
-
-function ringText(ring) {
-  // ring.label is the shared server-side label (ring N = N-th closure), the same as the tactical panel and coach.
-  if (!ring || ring.state === "unavailable" || ring.state === "inconsistent") return "Ring: not available at this time";
-  if (ring.state === "closing_target_unknown") return `${ring.label}; its end is not recorded, so it is not drawn`;
-  if (ring.state === "not_revealed") return `${ring.label}; no ring revealed yet`;
-  if (ring.state === "closing") return ring.countdown_s == null ? ring.label : `${ring.label} · ${formatClock(ring.countdown_s)} left`;
-  if (ring.state === "waiting") return `${ring.label} · next ring not revealed yet`;
-  return ring.label || "Ring: none at this time";
 }
 
 // Screen direction of a player's recorded yaw, or null for a plain dot.
@@ -486,11 +482,6 @@ function facingDirection(frame, player, project, px, py) {
   const dy = qy - py;
   const length = Math.hypot(dx, dy);
   return length > 0 ? [dx / length, dy / length] : null;
-}
-
-function formatClock(seconds) {
-  const whole = Math.max(0, Math.round(seconds));
-  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
 }
 
 function wrap(ctx, text, x, y, max, line) {

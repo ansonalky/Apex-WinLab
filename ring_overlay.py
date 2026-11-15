@@ -52,3 +52,34 @@ def overlay_geometry(entries: list[dict], t: int) -> tuple[dict, dict | None, st
     if start is None or not ring_at([candidate], start).get("known"):
         return ring, None, convention
     return ring, _circle(candidate, "endCenter", "endSize"), convention
+
+
+def following_destination(entries: list[dict], target: dict | None) -> dict | None:
+    """The stage after the active destination, never a duplicate or skipped stage."""
+    if target is None:
+        return None
+    stage = target.get("stage")
+    if not isinstance(stage, int) or isinstance(stage, bool):
+        return None
+    candidate = next((entry for entry in entries if entry.get("stage") == stage + 1), None)
+    if candidate is None:
+        return None
+    start = finite_number(candidate.get("start"))
+    if start is None or not ring_at([candidate], start).get("known"):
+        return None
+    return _circle(candidate, "endCenter", "endSize")
+
+
+def display_geometry(entries: list[dict], t: int, observer: bool = False) -> dict:
+    """Serialize display geometry. Observer callers supply recorded schedule entries."""
+    from ring_label import ring_label
+
+    ring, target, convention = overlay_geometry(entries, t)
+    return {
+        "t": t, "state": ring.get("phase"), "observer_preview": observer,
+        "location": {"x": ring["center"][0], "y": ring["center"][1], "r": ring["radius"]} if ring.get("known") else None,
+        "target": target,
+        "following_target": following_destination(entries, target),
+        "countdown_s": ring.get("closing_remaining_s"),
+        **ring_label(ring.get("phase"), ring.get("stage"), convention),
+    }

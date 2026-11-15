@@ -312,6 +312,7 @@ async function loadMatch(gameId) {
 
 async function loadMatchBody(gameId) {
   if (window.EventTimeline) window.EventTimeline.reset();
+  if (window.ObserverRing) window.ObserverRing.reset();
   const token = ++requestToken;
   if (inFlight) inFlight.controller.abort();
   inFlight = null;
@@ -513,7 +514,9 @@ function draw() {
     selectedTeam: selectedTeam(),
     colorFor,
     squadName,
-    ring: currentRing,
+    ring: window.ObserverRing ? window.ObserverRing.view({
+      gameId: summary.game_id, t: frame.t, causal: currentRing, redraw: draw,
+    }) : currentRing,
     mapConfig,
   });
 }
@@ -1343,7 +1346,7 @@ document.querySelector("#open-match").addEventListener("submit", (event) => {
 // Help bubbles: hover and keyboard focus show them, click or tap pins them,
 // and Escape dismisses. The bubble stays open while the pointer moves into it.
 function installHelp() {
-  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #event-timeline, #ring-status, #coach-run, .topbar a, .topbar h1";
+  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #event-timeline, #coach-run, .topbar a, .topbar h1";
   let hideTimer = null;
 
   function bubbleOf(help) { return help.querySelector(".help-bubble"); }
