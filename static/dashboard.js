@@ -248,7 +248,7 @@ function draw() {
 }
 
 function bar(value, max, className) {
-  if (value === null || max === null || max <= 0) return `<div class="bar ${className}"></div>`;
+  if (value == null || max == null || !(max > 0)) return `<div class="bar ${className}"></div>`;
   const width = Math.max(0, Math.min(100, (100 * value) / max));
   return `<div class="bar ${className}"><span style="width:${width}%"></span></div>`;
 }
@@ -260,15 +260,28 @@ function renderRoster() {
     roster.innerHTML = `<p class="unavailable">No players for this squad at this time.</p>`;
     return;
   }
-  roster.innerHTML = players.map((player) => `
-    <article class="player">
-      <header><strong>${textOrUnknown(player.name)}</strong><span>${textOrUnknown(player.status)}</span></header>
-      <div>Health ${textOrUnknown(player.health)} / ${textOrUnknown(player.healthMax)}</div>
-      ${bar(player.health, player.healthMax, "hp")}
-      <div>Shields ${textOrUnknown(player.shields)} / ${textOrUnknown(player.shieldMax)}</div>
-      ${bar(player.shields, player.shieldMax, "sh")}
+  const squadOut = (frame.eliminated_squads || {})[team];
+  roster.innerHTML = players.map((player) => {
+    // Display only: a confirmed-eliminated player shows 0 health and shields
+    // with their maximums kept. Telemetry and model inputs are unchanged.
+    // Downed players and "dead" (respawnable) players show their telemetry.
+    const playerOut = player.status === "eliminated";
+    const zeroed = (playerOut || squadOut != null) && player.status !== "downed";
+    const health = zeroed ? 0 : player.health;
+    const shields = zeroed ? 0 : player.shields;
+    const status = !playerOut && zeroed
+      ? `${textOrUnknown(player.status)} · squad eliminated at ${mmss(squadOut - replayStart())}`
+      : textOrUnknown(player.status);
+    return `
+    <article class="player${zeroed ? " out" : ""}">
+      <header><strong>${textOrUnknown(player.name)}</strong><span>${status}</span></header>
+      <div>Health ${textOrUnknown(health)} / ${textOrUnknown(player.healthMax)}</div>
+      ${bar(health, player.healthMax, "hp")}
+      <div>Shields ${textOrUnknown(shields)} / ${textOrUnknown(player.shieldMax)}</div>
+      ${bar(shields, player.shieldMax, "sh")}
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 // Predictions are made at every replay second before the cut-off, at the same

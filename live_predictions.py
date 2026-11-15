@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from dashboard_data import HELDOUT_BUNDLE, _model_file, _raw_path, _record, load_heldout_bundle
-from features import contention, replay_checkpoints, squad_rows
+from features import contention, elimination_team, replay_checkpoints, squad_rows
 from train_model import contention_baseline, masked, predict
 
 HELD_OUT = "held_out"
@@ -50,6 +50,7 @@ class LivePredictions:
         self._models: dict[str, dict] = {}
         self.bundle = load_heldout_bundle(data_dir)
         self.test_games = {game for game, split in (self.bundle.get("split_of") or {}).items() if split == "test"}
+        self._eliminations: dict[Any, dict] = {}
 
     def model(self, kind: str) -> dict | None:
         """The frozen model and where it came from, or None."""
@@ -84,6 +85,27 @@ class LivePredictions:
             },
         }
         return self._models[kind]
+
+    def squad_eliminations(self, game_id: Any) -> dict:
+        """Replay second of each squad's ``eliminated`` feed event, for display.
+
+        Only unambiguous, first events count. No squad in the 51 games was
+        respawned after its squad event, so it is treated as final.
+        """
+        if game_id in self._eliminations:
+            return self._eliminations[game_id]
+        record = _record(self.data_dir, game_id)
+        path = _raw_path(record, self.data_dir) if record else None
+        found: dict = {}
+        if path is not None:
+            for entry in json.loads(path.read_text(encoding="utf-8-sig")).get("series") or []:
+                for event in entry.get("f") or []:
+                    team, problem = elimination_team(event)
+                    if team is not None and not problem:
+                        found.setdefault(team, entry.get("t"))
+        with self._lock:
+            self._eliminations[game_id] = found
+        return found
 
     def available(self, game_id: Any, kind: str) -> bool:
         if kind == HELD_OUT and game_id not in self.test_games:

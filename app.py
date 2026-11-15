@@ -125,6 +125,10 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         frame_ms = (time.perf_counter() - started) * 1000
         frame["ring"] = ring_at(game_id, frame["t"])
         frame["live"] = {"heldout": live.at(game_id, frame["t"], HELD_OUT), "final": live.at(game_id, frame["t"], FINAL)}
+        # Squads whose eliminated event is at or before this second, for the roster display.
+        frame["eliminated_squads"] = {
+            str(team): t for team, t in live.squad_eliminations(game_id).items() if t is not None and t <= frame["t"]
+        }
         total_ms = (time.perf_counter() - started) * 1000
         response = jsonify(frame)
         response.headers["Server-Timing"] = f"frame;dur={frame_ms:.1f}, total;dur={total_ms:.1f}"
