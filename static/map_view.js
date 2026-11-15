@@ -426,9 +426,9 @@ function mapCordR(value, spec) {
 // The ring under the players, through the same project()/radius() as every
 // mark, so zoom and pan move it with the map. Outside the current boundary is
 // shaded orange; the boundary itself has no outline. The circle it is closing
-// toward is a thin white outline, drawn only while the server sends one: the
-// stream reveals a target when its stage starts closing, so there is none
-// while the ring waits, and none for a stage whose end is not recorded.
+// toward is a thin white outline, drawn whenever the causal map snapshot sends
+// a revealed target, including a waiting/countdown phase. Unknown targets and
+// incomplete final rings have no outline; the renderer never reads a schedule.
 const RING_RADIUS_MAX = 100000;
 function drawRing(ctx, ring, project, radius, map) {
   const location = ring && ring.location;

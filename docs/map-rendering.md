@@ -10,11 +10,15 @@ player positions.
 coordinate. Radius is `1024 * (radius / size.x)` and is not truncated.
 The image is the 2048 view: `/maps_2048/<telemetry map id>.webp`.
 
-The current ring follows `currentRingLocation`: while a stage is
-closing, center and radius lerp from start to end by
-`(t - start) / (end - start)`. While waiting, the next stage's start
-center and start size are shown. After the last stage, no circle is
-drawn. Future rings stay hidden.
+Orange shading follows the current safe boundary: during closing it interpolates
+from the revealed stage's start circle to its end circle. While waiting, it
+holds the last completed boundary. The white outline shows the closing target,
+then switches at closure to the immediately next stage's target **if that live
+entry was already revealed by the displayed second**, including countdowns.
+Unknown targets and incomplete final rings have no white outline. Neither the
+completed replay's final state nor its t=0 planned schedule supplies geometry.
+The map-only reader handles early reveals without changing prediction features
+or the tactical/coach ring reader. Numbering still uses the shared ring labels.
 
 Cached images, all 2048×2048, from `https://overstat.gg/maps_2048/`:
 

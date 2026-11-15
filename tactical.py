@@ -32,7 +32,8 @@ from dashboard_data import _raw_path, _record
 from features import STANDING
 from overstat_patch import _leaf, apply_frame, export_players, frame_entries, initial_state
 from event_timeline import display_feed, markers_for_team, ring_span
-from ring_features import live_entries, ring_at, ring_target
+from ring_features import live_entries, ring_at
+from ring_overlay import overlay_geometry
 from ring_label import LAST_CLOSED, ring_label
 from turning_points import recorded_events
 
@@ -247,11 +248,14 @@ class TacticalIndex:
                 if isinstance(stage, int) and not isinstance(stage, bool) and stage not in ring_spans:
                     ring_spans[stage] = ring_span(entry)
             ring = ring_at(entries, t)
+            map_ring, target, waiting_convention = overlay_geometry(entries, t)
             seconds[t] = {
                 "players": [_player(row) for row in export_players(state, observed, t)],
                 "ring": ring,
                 # Map only; the coach and tactical measurements read "ring".
-                "ring_target": ring_target(entries, ring),
+                "ring_target": target,
+                "map_ring": map_ring,
+                "map_ring_waiting_convention": waiting_convention,
                 "phase": state.get("state"),
                 "facing": _facing(state, observed, t, facing.confirmed),
             }
@@ -289,7 +293,7 @@ class TacticalIndex:
             # Before play starts no ring entry is live; after the last second nothing is recorded.
             phase = "not_revealed" if game["playing_start"] is None or t < game["playing_start"] else "unavailable"
             return {"state": phase, "t": t, "location": None, "target": None, **ring_label(phase, None, LAST_CLOSED)}
-        ring = second["ring"]
+        ring = second.get("map_ring", second["ring"])
         known = ring.get("known")
         return {
             "state": ring.get("phase"),
@@ -297,7 +301,7 @@ class TacticalIndex:
             "location": {"x": ring["center"][0], "y": ring["center"][1], "r": ring["radius"]} if known else None,
             "target": second.get("ring_target"),
             "countdown_s": ring.get("closing_remaining_s"),
-            **ring_label(ring.get("phase"), ring.get("stage"), LAST_CLOSED),
+            **ring_label(ring.get("phase"), ring.get("stage"), second.get("map_ring_waiting_convention", LAST_CLOSED)),
         }
 
     def event_timeline(self, game_id: int, team: Any) -> dict:
