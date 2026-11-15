@@ -601,10 +601,10 @@ class MatchOrderTest(unittest.TestCase):
         class Connection:
             def execute(self, _query):
                 return Result([
-                    (1, 1, "Low", "mp", 7.25, "org", None, None, 1, "W", "src", False),
-                    (30, 1, "Expansion", "mp", 9.5, "org", None, None, 1, "W", "src", False),
-                    (12, 1, "Same", "mp", 9.5, "org", None, None, 1, "W", "src", False),
-                    (4, 1, "Missing", "mp", None, "org", None, None, 1, "W", "src", False),
+                    (1, 1, "Low", "mp", 7.25, "org", None, None, 1, "W", "src", False, None),
+                    (30, 1, "Expansion", "mp", 9.5, "org", None, None, 1, "W", "src", False, "accepted-expansion-49"),
+                    (12, 1, "Same", "mp", 9.5, "org", None, None, 1, "W", "src", False, "original"),
+                    (4, 1, "Missing", "mp", None, "org", None, None, 1, "W", "src", False, None),
                 ])
 
         reader = TigerReader.__new__(TigerReader)
@@ -617,6 +617,8 @@ class MatchOrderTest(unittest.TestCase):
         tiger = reader.list_matches()
         self.assertEqual([row["game_id"] for row in tiger], [row["game_id"] for row in listed])
         self.assertEqual([row["event"] for row in tiger], ["Expansion", "Same", "Low", "Missing"])
+        # A NULL collection is a row imported before the column existed: the original dataset.
+        self.assertEqual([row["collection"] for row in tiger], ["accepted-expansion-49", "original", "original", "original"])
 
 
 class ExpansionCollectionTest(unittest.TestCase):

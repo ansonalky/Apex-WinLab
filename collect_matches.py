@@ -114,10 +114,12 @@ def _load_json_bytes(data: bytes) -> dict | list:
 
 def _cache_json(path: Path, url: str, client: Client):
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
     body = client.get(url)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
+    atomic_write(path, body)
     return _load_json_bytes(body)
 
 

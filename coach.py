@@ -43,7 +43,9 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
-from live_predictions import FINAL, HELD_OUT
+from dashboard_data import EXPANSION_REASON, _record, frozen_model_applies
+from live_predictions import FINAL, HELD_OUT, NEW_MATCH
+from match_inference import LABEL as NEW_MATCH_LABEL
 from tactical import LIMITS as TACTICAL_LIMITS
 from tactical import bearing, measure
 
@@ -70,12 +72,19 @@ FORBIDDEN_KEYS = {
 EVENT_TYPES = ("knock", "revive", "squad_elimination", "respawn")
 AI_LABEL = "AI-generated review. It interprets the evidence listed; check it against the replay."
 
+FINAL_MODEL_LIMIT = "The final-model probability is excluded: that model was fitted on this match's own result."
+EXPANSION_MODEL_LIMIT = "No model estimate is shown: this expansion game was never used to fit or evaluate the frozen models."
+NEW_MATCH_LIMIT = (
+    "The win estimate is a new-match prediction from the model trained on the original 51 games. "
+    "It is not part of the frozen held-out evaluation and was not fitted on this game."
+)
+
 COACH_LIMITS = [
     "No terrain, cover or line-of-sight data. Positions are squad centroids from telemetry.",
     "No loadout, ammunition, healing items, ultimate or ability state.",
     "No voice communications or player intentions.",
     "Events come from the replay's feed; damage events are attributed by the feed only.",
-    "The final-model probability is excluded: that model was fitted on this match's own result.",
+    FINAL_MODEL_LIMIT,
     "Nothing after the analysed second is included: no winner, placement or match conclusion.",
 ]
 
@@ -157,6 +166,17 @@ def _round(value: Any, digits: int = 3) -> Any:
     return round(value, digits) if isinstance(value, float) else value
 
 
+def _new_match_at(live, game_id: int, t: int) -> dict | None:
+    """Verified unseen-game estimate at ``t``. Unverified and in-sample games are excluded."""
+    if not hasattr(live, "inference"):
+        return None
+    info = live.inference(game_id)
+    if info.get("membership") != "verified_unseen" or not info.get("predict"):
+        return None
+    at = live.at(game_id, t, NEW_MATCH)
+    return at if at.get("available") else None
+
+
 def _prob_at(live, game_id: int, t: int) -> dict | None:
     """The selected squad's held-out row at exactly ``t``, or None."""
     at = live.at(game_id, t, HELD_OUT)
@@ -173,6 +193,8 @@ def _snapshot(game: dict, live, game_id: int, t: int, team: str) -> dict:
     """The comparable measurements used by the change items."""
     m = measure(game, t, team)
     row = _squad_row(_prob_at(live, game_id, t), team)
+    new_at = _new_match_at(live, game_id, t)
+    new_row = _squad_row(new_at.get("point") if new_at else None, team)
     ring = m["ring"]
     return {
         "standing_members": m["quality"]["standing"],
@@ -187,6 +209,7 @@ def _snapshot(game: dict, live, game_id: int, t: int, team: str) -> dict:
         "ring_phase": ring.get("phase"),
         "members_outside_ring": ring.get("outside_players"),
         "heldout_probability": _round(row["model"]) if row else None,
+        "new_match_probability": _round(new_row["model"]) if new_row else None,
     }
 
 
@@ -329,10 +352,17 @@ def build_packet(*, store, live, tactical, game_id: int, t: int, team: Any) -> d
         "note": "Telemetry at this second. A downed player's health is the bleed-out pool.",
     })
 
+    record = _record(live.data_dir, game_id)
+    expansion = record is not None and not frozen_model_applies(live.data_dir, record)
+    info = live.inference(game_id) if hasattr(live, "inference") else {}
     point = held.get("point") if held.get("available") else None
     row = _squad_row(point, team)
-    model_entry = live.model(HELD_OUT) if point else live.model(FINAL)
+    new_at = None if row else _new_match_at(live, game_id, t)
+    new_row = _squad_row(new_at.get("point") if new_at else None, team)
+    model_entry = live.model(HELD_OUT) if point else live.model(NEW_MATCH if new_row else FINAL)
     features = list(((model_entry or {}).get("provenance") or {}).get("features") or [])
+    if not features and info.get("provenance"):
+        features = list(info["provenance"].get("features") or [])
     if row:
         ranked = sorted(point["squads"], key=lambda s: -s["model"])
         prov = held.get("provenance") or {}
@@ -351,11 +381,44 @@ def build_packet(*, store, live, tactical, game_id: int, t: int, team: Any) -> d
             "model_features": features,
             "note": "Held-out: frozen model fit on other sessions. An estimate, not a cause.",
         })
+    elif new_row:
+        ranked = sorted(new_at["point"]["squads"], key=lambda s: -s["model"])
+        prov = new_at.get("provenance") or info.get("provenance") or {}
+        note = f"{NEW_MATCH_LABEL} Not a held-out evaluation and not fitted on this game."
+        if info.get("storage") == "preview" and info.get("limitation"):
+            note = f"{note} {info['limitation']}"
+        add("PRED", "prediction", "New-match win estimate (per second)", t, {
+            "probability": _round(new_row["model"]),
+            "probability_pct": round(100 * new_row["model"], 1),
+            "contention_baseline": _round(new_row["uniform_contention"]),
+            "contention_baseline_pct": round(100 * new_row["uniform_contention"], 1),
+            "rank_among_squads": 1 + [str(s["teamId"]) for s in ranked].index(team),
+            "squads_in_contention": new_at["point"]["in_contention"],
+            "eligibility": new_at["point"]["eligibility"],
+            "provenance": {
+                "kind": "new_match", "file": prov.get("file"), "sha256_prefix": (prov.get("sha256") or "")[:12],
+                "fit_on": prov.get("fit_on"), "sampling": prov.get("sampling"),
+                "membership": prov.get("membership"),
+                "telemetry_sha256_prefix": (prov.get("telemetry_sha256") or "")[:12],
+            },
+            "model_features": features,
+            "note": note,
+        })
     else:
+        if new_at and new_at.get("available"):
+            excluded = new_at.get("reason") or "No new-match prediction at this second."
+        elif info.get("membership") not in (None, "original", "verified_unseen") and info.get("reason"):
+            excluded = info["reason"] + " The estimate is not used as independent evidence."
+        elif expansion:
+            excluded = EXPANSION_REASON
+        else:
+            excluded = (
+                "This match is not a held-out test game. The only per-second estimate here comes from the final "
+                "model, which was fitted on this match's result, so it is excluded."
+            )
         add("PRED", "prediction", "No held-out win estimate", t, {
             "available": False,
-            "reason": "This match is not a held-out test game. The only per-second estimate here comes from the final "
-                      "model, which was fitted on this match's result, so it is excluded.",
+            "reason": excluded,
             "model_features": features,
         })
     add("MODEL-SCOPE", "prediction", "What the win model uses", t, {
@@ -425,12 +488,22 @@ def build_packet(*, store, live, tactical, game_id: int, t: int, team: Any) -> d
         }
         if "heldout_probability" in delta:
             delta["heldout_probability_pct_points"] = round(100 * delta["heldout_probability"], 1)
+        if "new_match_probability" in delta:
+            delta["new_match_probability_pct_points"] = round(100 * delta["new_match_probability"], 1)
         add(f"CHG-{offset}", "change", f"Change over the last {t - then_t} s", then_t,
             {"offset_s": t - then_t, "then": then, "now": snapshot_now, "change": delta}, window_from=then_t)
 
+    if info.get("membership") == "verified_unseen" and new_row:
+        model_limit = NEW_MATCH_LIMIT
+        if info.get("storage") == "preview" and info.get("limitation"):
+            model_limit = f"{NEW_MATCH_LIMIT} {info['limitation']}"
+    elif expansion:
+        model_limit = info.get("reason") or EXPANSION_MODEL_LIMIT
+    else:
+        model_limit = FINAL_MODEL_LIMIT
     add("DATA", "quality", "Missing and stale data, limitations", t, {
         "squad": now["quality"],
-        "limits": TACTICAL_LIMITS + COACH_LIMITS,
+        "limits": TACTICAL_LIMITS + [model_limit if limit == FINAL_MODEL_LIMIT else limit for limit in COACH_LIMITS],
     })
 
     packet = {

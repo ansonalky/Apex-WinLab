@@ -105,7 +105,9 @@ So the Tiger-backed dashboard still needs the local data directory for the ring.
 
 Quality on the selector is the manifest's unrounded per-game score. It is not a model feature. The match dropdown lists numeric quality from highest to lowest, with missing scores last and the higher game id first when scores tie.
 
-`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and get no frozen-model prediction. Their maps, rings, and coaching still read that directory's replay files. The original manifest and models are not modified.
+`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The label is “New-match prediction · model trained on the original 51 games.” when the game id and replay hash are both absent from that model’s training inventory. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
+
+Opening an Overstat URL is documented in [open-match.md](open-match.md). A saved import is a separate `user-import` collection. A temporary preview stays out of Tiger Data and expires after 24 hours.
 
 ## Launch
 

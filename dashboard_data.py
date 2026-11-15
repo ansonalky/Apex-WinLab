@@ -224,7 +224,9 @@ def _record(data_dir: Path, game_id: int) -> dict | None:
         found = _record_in(extra, game_id)
         if found is not None:
             return found | {"_data_dir": str(extra), "_collection": collection_name(extra)}
-    return None
+    from preview_store import preview_record
+
+    return preview_record(game_id)
 
 
 _MANIFESTS: dict[Path, tuple[int, dict]] = {}

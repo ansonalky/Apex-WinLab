@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from features import elimination_team
-from live_predictions import FINAL, HELD_OUT, LivePredictions
+from live_predictions import FINAL, HELD_OUT, NEW_MATCH, LivePredictions
 
 LABEL = "Largest changes in model estimate."
 DEFAULT_WINDOWS = (5, 10, 20)
@@ -325,6 +325,9 @@ def detect_turning_points(
 def _missing(live: LivePredictions, game_id: Any, kind: str) -> list[str]:
     from dashboard_data import EXPANSION_REASON, _record, frozen_model_applies
 
+    if kind == NEW_MATCH:
+        info = live.inference(game_id) if hasattr(live, "inference") else {}
+        return [info.get("reason") or "The saved model could not make a new-match prediction."]
     record = _record(live.data_dir, game_id)
     if record is not None and not frozen_model_applies(live.data_dir, record):
         return [EXPANSION_REASON]
@@ -352,9 +355,12 @@ def canonical_squad(squad_id: Any) -> Any:
     return text
 
 
-def model_version(live: LivePredictions, kind: str) -> str | None:
-    """The frozen file's sha256, or None when that model is not loaded."""
-    if kind not in (HELD_OUT, FINAL):
+def model_version(live: LivePredictions, kind: str, game_id: Any = None) -> str | None:
+    """The frozen file's sha256, or the new-match cache key when that kind is used."""
+    if kind == NEW_MATCH and game_id is not None and hasattr(live, "inference"):
+        provenance = (live.inference(game_id).get("provenance") or {})
+        return provenance.get("cache_key") or provenance.get("sha256")
+    if kind not in (HELD_OUT, FINAL, NEW_MATCH):
         return None
     model = live.model(kind)
     if not model:
@@ -385,7 +391,7 @@ def highlights_for_game(
     data_dir = Path(data_dir)
     squad_id = canonical_squad(squad_id)
     live = live or LivePredictions(data_dir)
-    if kind not in (HELD_OUT, FINAL) or not live.available(game_id, kind):
+    if kind not in (HELD_OUT, FINAL, NEW_MATCH) or not live.available(game_id, kind):
         return {
             "available": False,
             "label": LABEL,
@@ -397,6 +403,8 @@ def highlights_for_game(
         }
     table = live.table(game_id, kind)
     provenance = live.model(kind)["provenance"]
+    if kind == NEW_MATCH:
+        provenance = (live.inference(game_id).get("provenance") or provenance)
     probe = live.at(game_id, -1, kind)
     cutoff = probe.get("cutoff_t")
     stop = cutoff if conclusion_t is None else conclusion_t
@@ -456,7 +464,7 @@ class HighlightCache:
         **kwargs,
     ) -> dict:
         squad = canonical_squad(squad_id)
-        version = model_version(live, kind)
+        version = model_version(live, kind, game_id)
         key = (str(game_id), str(kind), squad, version)
         with self._lock:
             cached = self._values.get(key)

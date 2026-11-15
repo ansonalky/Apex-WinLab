@@ -31,7 +31,8 @@ from typing import Any
 
 import coach
 from coach import RING_RULE, TERRAIN_RULE, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
-from live_predictions import FINAL, HELD_OUT
+from live_predictions import FINAL, HELD_OUT, NEW_MATCH
+from match_inference import LABEL as NEW_MATCH_LABEL
 from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
@@ -189,6 +190,7 @@ def _retrospective(*, live, tactical_game: dict, game_id: int, team: str, kind: 
     add("R-EPISODE", "The downward episode", episode["episode_start_t"], {
         "prediction_kind": kind,
         "in_sample": kind == FINAL,
+        "new_match": kind == NEW_MATCH,
         "model_file": prov.get("file"),
         "sha256_prefix": (prov.get("sha256") or "")[:12],
         "representative_window": {
@@ -200,8 +202,13 @@ def _retrospective(*, live, tactical_game: dict, game_id: int, team: str, kind: 
             "start_clock": _clock(episode["episode_start_t"] - start), "end_clock": _clock(end_t - start),
             "windows_merged": episode.get("windows_merged"),
         },
-        "note": ("Final model, fitted on these games including this one: in-sample, not independent evidence. "
-                 if kind == FINAL else "Held-out model. ") + "A change in the estimate, not a cause.",
+        "note": (
+            "Final model, fitted on these games including this one: in-sample, not independent evidence. "
+            if kind == FINAL else
+            f"{NEW_MATCH_LABEL} Not a held-out evaluation and not fitted on this game. "
+            if kind == NEW_MATCH else
+            "Held-out model. "
+        ) + "A change in the estimate, not a cause.",
     }, episode["episode_start_t"], end_t)
 
     first = _model_rows(live, game_id, kind, episode["episode_start_t"])
@@ -282,8 +289,15 @@ def _retrospective(*, live, tactical_game: dict, game_id: int, team: str, kind: 
 def build_decision_packet(*, store, live, tactical, highlights, root, game_id: int, team: Any, kind: str,
                           start_t: int, episode_start_t: int, decision_t: int | None) -> dict:
     team = str(team)
-    if kind not in (HELD_OUT, FINAL):
-        return {"status": "invalid", "reason": "kind must be held_out or final_model_fitted"}
+    if kind not in (HELD_OUT, FINAL, NEW_MATCH):
+        return {"status": "invalid", "reason": "kind must be held_out, final_model_fitted, or new_match"}
+    if kind == NEW_MATCH:
+        info = live.inference(game_id) if hasattr(live, "inference") else {}
+        if info.get("membership") != "verified_unseen":
+            return {
+                "status": "unavailable",
+                "reason": info.get("reason") or "Training membership cannot be verified, so this estimate is not used as independent evidence.",
+            }
     summary = store.summary(game_id)
     if summary is None:
         return {"status": "unavailable", "reason": "match not found"}

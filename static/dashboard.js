@@ -41,6 +41,7 @@ const carousel = { up: 0, down: 0 };
 
 const HELD_OUT = "held_out";
 const FINAL = "final_model_fitted";
+const NEW_MATCH = "new_match";
 
 // Throws on an HTTP error, so an error page is never parsed as data.
 async function getJSON(url, options) {
@@ -80,14 +81,16 @@ function compareMatches(a, b) {
   return Number(b.game_id) - Number(a.game_id);
 }
 
-async function loadMatches() {
-  const previous = matchSelect.value;
+async function loadMatches(preferId) {
+  const previous = preferId != null ? String(preferId) : matchSelect.value;
   const matches = (await (await fetch("/api/matches")).json()).sort(compareMatches);
   matchSelect.innerHTML = "";
   for (const match of matches) {
     const option = document.createElement("option");
     option.value = match.game_id;
-    const tag = match.heldout ? "[held-out test] " : "";
+    // Expansion games are never held-out and never in a frozen split.
+    const expansion = match.collection && match.collection !== "original";
+    const tag = match.heldout ? "[held-out test] " : match.collection === "user-import" ? "[imported] " : expansion ? "[expansion] " : "";
     option.textContent = `${tag}${match.event || "Untitled"} · ${match.map_name || "map unknown"} · quality ${num(match.quality_score, 2)}`;
     matchSelect.append(option);
   }
@@ -112,14 +115,21 @@ function replayStart() {
   return summary.playing_start ?? summary.first_t ?? 0;
 }
 
-// One primary view: held-out when this match is a held-out test game,
-// otherwise the fitted final model, labeled as in-sample.
+function usesNewMatch() {
+  return Boolean(summary && summary.inference && summary.inference.role === "new_match");
+}
+
+// Held-out for an original test game, the fitted model for the other original
+// games, and the saved-model forward pass for everything outside that set.
 function primaryKind() {
+  if (usesNewMatch()) return NEW_MATCH;
   return heldout && heldout.available ? HELD_OUT : FINAL;
 }
 
 function kindLabel(kind) {
-  return kind === HELD_OUT ? "Held-out model" : "Fitted model (in-sample: trained on this match)";
+  if (kind === HELD_OUT) return "Held-out model";
+  if (kind === NEW_MATCH) return (summary && summary.inference && summary.inference.label) || "New-match prediction";
+  return "Fitted model (in-sample: trained on this match)";
 }
 
 async function loadMatch(gameId) {
@@ -155,7 +165,11 @@ async function loadMatch(gameId) {
   heldout = nextHeldout;
   evaluation = nextEvaluation;
   mapConfig = map;
-  meta.textContent = [summary.event, summary.map_name, `quality ${num(summary.quality_score, 2)}`].filter(Boolean).join(" · ");
+  const metaParts = [summary.event, summary.map_name, `quality ${num(summary.quality_score, 2)}`];
+  if (summary.inference && summary.inference.storage === "preview") metaParts.push("temporary preview");
+  else if (summary.inference && summary.inference.role === "new_match") metaParts.push("saved");
+  if (summary.inference && summary.inference.label) metaParts.push(summary.inference.label);
+  meta.textContent = metaParts.filter(Boolean).join(" · ");
   // The transform note is in Model details; only a missing map is shown here.
   note.hidden = Boolean(mapConfig && mapConfig.supported);
   note.textContent = note.hidden ? "" : (mapConfig && mapConfig.message) || "Map background unavailable.";
@@ -451,6 +465,17 @@ function viewHeader(kind) {
 }
 
 function predictionPanel(kind) {
+  if (kind === NEW_MATCH) {
+    const info = (summary && summary.inference) || {};
+    const live = ((frame && frame.live) || {}).new_match || {};
+    const outcomePart = frame && frame.finished ? recordedOutcome() : "";
+    const livePart = live.status === "loading"
+      ? `<p class="when">Computing win estimates from the saved model.</p>`
+      : live.point
+        ? livePanel(live, info.label || "New-match prediction")
+        : `<p class="unavailable">${esc(live.reason || info.reason || "No estimate at this second.")}</p>`;
+    return `<p><span class="tag newmatch">new match</span>${esc(info.label || info.reason || "")}</p>${info.limitation ? `<p class="when">${esc(info.limitation)}</p>` : ""}${outcomePart}${livePart}`;
+  }
   const view = kind === HELD_OUT ? heldout : curve;
   const live = ((frame && frame.live) || {})[kind === HELD_OUT ? "heldout" : "final"];
   const selection = ((frame && frame.checkpoints) || {})[kind === HELD_OUT ? "heldout" : "final"];
@@ -466,9 +491,90 @@ function predictionPanel(kind) {
   return `${viewHeader(kind)}${outcomePart}${livePart}${checkpointHistory(view, selection, `history-${kind}`)}`;
 }
 
+function estimateInfo(kind, live) {
+  const info = (summary && summary.inference) || {};
+  const provenance = (live && live.provenance) || info.provenance || {};
+  const limitation = (live && live.limitation) || info.limitation || "";
+  return `<details class="info" ${window.UI.keep("estimate-info")}><summary title="About this estimate" aria-label="About this estimate">ⓘ</summary>
+      <div class="info-body">
+        <p><strong>${esc(kindLabel(kind))}</strong> One estimate per replay second from the saved model, at the same second as the map and roster; nothing is interpolated.</p>
+        <p class="when">Model file ${esc(provenance.file || "Unknown")}, sha256 ${esc((provenance.sha256 || "").slice(0, 12) || "Unknown")}. Fit on ${esc(provenance.fit_on || "Unknown")}. Replay sha256 ${esc((provenance.telemetry_sha256 || "").slice(0, 12) || "Unknown")}.</p>
+        ${limitation ? `<p class="when">${esc(limitation)}</p>` : ""}
+        <p class="when">An unknown feature uses the saved training mean. Baseline: 1 ÷ squads still in contention.</p>
+      </div></details>`;
+}
+
+function estimateValue(live) {
+  const point = live.point;
+  const team = selectedTeam();
+  const row = point.squads.find((squad) => String(squad.teamId) === team);
+  const ranked = point.squads.filter((squad) => !squad.eliminated).sort((a, b) => b.model - a.model);
+  const rank = row && !row.eliminated ? ranked.findIndex((squad) => String(squad.teamId) === team) + 1 : null;
+  return { row, rank, ranked };
+}
+
+function renderNewMatchEstimate() {
+  const info = summary.inference || {};
+  const live = ((frame && frame.live) || {}).new_match || {};
+  const tag = `<span class="tag newmatch">new match</span>`;
+  const storage = info.storage === "preview"
+    ? `<span class="tag preview">temporary preview</span>`
+    : `<span class="tag newmatch">saved</span>`;
+  const infoBox = estimateInfo(NEW_MATCH, live);
+  if (live.status === "loading") {
+    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="when">Computing win estimates from the saved model.</span></div>${infoBox}</div>`;
+    scheduleEstimatePoll();
+    return;
+  }
+  if (live.status === "unavailable" || live.available === false) {
+    estimateBox.innerHTML = `<p class="unavailable">No estimate is available for this match.</p><p class="when">${esc(live.reason || info.reason || "")}</p>`;
+    return;
+  }
+  if (frame && frame.finished) {
+    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="when">Match finished; no estimate after the result.</span></div>${infoBox}</div>${recordedOutcome()}`;
+    return;
+  }
+  if (!live.point) {
+    const reason = live.reason ? `: ${esc(live.reason)}` : "";
+    estimateBox.innerHTML = `<div class="estimate-head"><div>${tag}${storage}<span class="unavailable">No estimate at ${frame ? mmss(frame.elapsed) : "this time"}${reason}.</span></div>${infoBox}</div>`;
+    return;
+  }
+  const { row, rank, ranked } = estimateValue(live);
+  estimateBox.innerHTML = `<div class="estimate-head">
+      <div class="estimate-value">${row ? pct(row.model) : "Unknown"}</div>
+      <div class="estimate-text">
+        <strong>${esc(squadName(selectedTeam()))}</strong>${row && row.eliminated ? " · eliminated" : rank ? ` · rank ${rank} of ${ranked.length} in contention` : ""}<br>
+        <span class="when">${tag}${storage} at ${mmss(live.point.elapsed)} · baseline ${row ? pct(row.uniform_contention) : "Unknown"}</span>
+      </div>
+      ${infoBox}
+    </div>
+    ${live.point.eligibility === "unverified" ? `<p class="unavailable small">${eligibilityText(live.point)}</p>` : ""}
+    ${comparisonTable(live.point.squads, "model")}`;
+}
+
+let estimateTimer = null;
+function scheduleEstimatePoll() {
+  clearTimeout(estimateTimer);
+  const elapsed = Number(timeInput.value);
+  estimateTimer = setTimeout(() => {
+    if (!usesNewMatch() || !frame) return;
+    const live = frame.live && frame.live.new_match;
+    if (!live || live.status !== "loading") return;
+    if (inFlight || pendingSeek !== null || Number(timeInput.value) !== elapsed) {
+      scheduleEstimatePoll();
+      return;
+    }
+    loadFrame(elapsed);
+  }, 1200);
+}
+
 // The one primary estimate on the page.
 function renderEstimate() {
   const kind = primaryKind();
+  if (kind === NEW_MATCH) {
+    renderNewMatchEstimate();
+    return;
+  }
   const view = kind === HELD_OUT ? heldout : curve;
   const live = ((frame && frame.live) || {})[kind === HELD_OUT ? "heldout" : "final"];
   const tag = kind === HELD_OUT
@@ -522,7 +628,7 @@ function renderPredictions() {
 function renderDetails() {
   if (!summary) return;
   const kind = primaryKind();
-  const alt = kind === HELD_OUT ? FINAL : HELD_OUT;
+  const alt = kind === HELD_OUT ? FINAL : kind === NEW_MATCH ? FINAL : HELD_OUT;
   document.querySelector("#backend-details").innerHTML = backendInfo
     ? `<p>Data backend: <strong>${esc(backendInfo.label || backendInfo.backend)}</strong> <span class="when">${esc(backendInfo.detail || "")}</span></p>`
     : `<p class="when">Data backend: Unknown</p>`;
@@ -532,6 +638,9 @@ function renderDetails() {
     <p class="when">${mapConfig && mapConfig.supported ? "" : `${esc(summary.coordinate_note || "")} `}Distances and heights elsewhere on this page are in unverified game units.</p>`;
   provenanceBox.innerHTML = frame ? predictionPanel(kind) : `<p class="when">Loading…</p>`;
   document.querySelector("#alt-title").textContent = alt === HELD_OUT ? "Alternate estimate: held-out model" : "Alternate estimate: fitted model (in-sample)";
+  if (kind === NEW_MATCH) {
+    document.querySelector("#alt-title").textContent = "Frozen fitted model (not used for this match)";
+  }
   altBox.innerHTML = frame ? predictionPanel(alt) : `<p class="when">Loading…</p>`;
   document.querySelector("#alt-highlights-title").textContent = `Key moments from the ${alt === HELD_OUT ? "held-out" : "fitted"} model`;
   renderHighlightList(altHighlights, highlightResults[alt]);
@@ -642,6 +751,10 @@ function renderCarousel(direction) {
   }
   if (!result.ok || !result.body || result.body.available !== true) {
     const body = result.body || {};
+    if (body.status === "loading") {
+      box.innerHTML = `${head(0, 0)}<p class="when">Computing win estimates from the saved model.</p>`;
+      return;
+    }
     const reason = body.error || (body.missing || []).join("; ") || (result.status ? `HTTP ${result.status}` : "");
     box.innerHTML = `${head(0, 0)}${unavailableLine(reason)}`;
     return;
@@ -731,6 +844,26 @@ async function fetchHighlights(gameId, kind, team) {
   }
 }
 
+function highlightKinds() {
+  return usesNewMatch() ? [NEW_MATCH] : [HELD_OUT, FINAL];
+}
+
+function watchHighlights(token, gameId, kind, team) {
+  fetchHighlights(gameId, kind, team).then((result) => {
+    if (token !== highlightToken) return;
+    highlightResults[kind] = result;
+    if (kind === primaryKind()) {
+      renderCarousel("up");
+      renderCarousel("down");
+    } else if (detailsDialog.open) {
+      renderHighlightList(altHighlights, result);
+    }
+    if (result.body && result.body.status === "loading") {
+      setTimeout(() => watchHighlights(token, gameId, kind, team), 1200);
+    }
+  });
+}
+
 function loadHighlights() {
   if (!summary) return;
   const token = ++highlightToken;
@@ -741,18 +874,7 @@ function loadHighlights() {
   carousel.down = 0;
   renderCarousel("up");
   renderCarousel("down");
-  for (const kind of [HELD_OUT, FINAL]) {
-    fetchHighlights(gameId, kind, team).then((result) => {
-      if (token !== highlightToken) return;
-      highlightResults[kind] = result;
-      if (kind === primaryKind()) {
-        renderCarousel("up");
-        renderCarousel("down");
-      } else if (detailsDialog.open) {
-        renderHighlightList(altHighlights, result);
-      }
-    });
-  }
+  for (const kind of highlightKinds()) watchHighlights(token, gameId, kind, team);
 }
 
 function seekHighlight(elapsed) {
@@ -880,5 +1002,88 @@ function currentMoment() {
 }
 if (window.Coach) safely(() => window.Coach.init({ context: currentMoment, seek: seekHighlight }));
 if (window.DecisionReview) safely(() => window.DecisionReview.init({ context: currentMoment, seek: seekHighlight, redraw: () => { if (frame) draw(); } }));
+function ensureOption(gameId, label) {
+  const value = String(gameId);
+  if ([...matchSelect.options].some((option) => option.value === value)) {
+    matchSelect.value = value;
+    return;
+  }
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  matchSelect.append(option);
+  matchSelect.value = value;
+}
+
+async function openOverstat(url, gameNumber) {
+  const status = document.querySelector("#open-status");
+  const choices = document.querySelector("#open-choices");
+  status.hidden = false;
+  status.textContent = "Opening…";
+  choices.hidden = true;
+  choices.innerHTML = "";
+  const body = { url };
+  if (gameNumber != null) body.game_number = gameNumber;
+  let result = null;
+  try {
+    const response = await fetch("/api/open-match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    result = await response.json();
+  } catch (error) {
+    status.textContent = "The match could not be opened.";
+    return;
+  }
+  if (result.status === "choose") {
+    status.textContent = result.message || "This session has more than one game. Choose one to open.";
+    choices.hidden = false;
+    for (const game of result.games || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "action quiet small";
+      const quality = game.quality_score == null ? "quality unknown" : `quality ${num(game.quality_score, 2)}`;
+      button.textContent = `Game ${textOrUnknown(game.game_number)} · ${game.map_name || "map unknown"} · ${quality}`;
+      button.addEventListener("click", () => openOverstat(url, game.game_number));
+      choices.append(button);
+    }
+    return;
+  }
+  if (result.status === "retry") {
+    status.textContent = result.message || "Overstat rate-limited this request. Wait and try the same URL again.";
+    return;
+  }
+  if (result.status !== "ready" && result.status !== "exists") {
+    status.textContent = result.message || "This URL could not be opened.";
+    return;
+  }
+  const saved = result.storage !== "preview";
+  const heading = result.storage === "preview" ? "Temporary preview" : result.status === "ready" ? "Saved" : "Already open";
+  status.textContent = `${heading}. ${result.message || ""}`.trim();
+  if (!saved) {
+    ensureOption(result.game_id, `Temporary preview · game ${result.game_id}`);
+    await loadMatch(result.game_id);
+    return;
+  }
+  await loadMatches(result.game_id);
+  if (matchSelect.value !== String(result.game_id)) {
+    ensureOption(result.game_id, `Saved import · game ${result.game_id}`);
+    await loadMatch(result.game_id);
+  }
+}
+
+document.querySelector("#open-match").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const url = document.querySelector("#overstat-url").value.trim();
+  if (!url) {
+    const status = document.querySelector("#open-status");
+    status.hidden = false;
+    status.textContent = "Paste a public Overstat match, session, or replay URL.";
+    return;
+  }
+  openOverstat(url);
+});
+
 loadBackend();
 loadMatches();

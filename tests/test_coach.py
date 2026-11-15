@@ -269,3 +269,37 @@ class RealPackets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+EXPANSION = Path.home() / "Apex-WinLab-expansion" / "data"
+
+
+@unittest.skipUnless((DATA / "raw").is_dir() and (EXPANSION / "collection" / "manifest.json").is_file(),
+                     "local replay data or the expansion package is not present")
+class ExpansionPacket(unittest.TestCase):
+    def test_expansion_game_is_a_verified_unseen_forward_pass(self):
+        from dashboard_data import EXPANSION_REASON, MatchStore, clear_expansion_dirs, register_expansion_dir
+        from live_predictions import LivePredictions
+        from tactical import TacticalIndex
+
+        register_expansion_dir(EXPANSION)
+        try:
+            root = DATA.resolve()
+            store, live = MatchStore(root), LivePredictions(root)
+            game = next(row for row in store.matches() if row["collection"] != "original")
+            summary = store.summary(game["game_id"])
+            team = summary["squads"][0]["teamId"]
+            built = build_packet(store=store, live=live, tactical=TacticalIndex(root), game_id=game["game_id"],
+                                 t=summary["playing_start"] + 120, team=team)
+            self.assertEqual(built["status"], "ok")
+            info = live.inference(game["game_id"])
+            self.assertEqual(info["membership"], "verified_unseen", info.get("reason"))
+            self.assertTrue(info["predict"])
+            self.assertEqual(info["label"], "New-match prediction · model trained on the original 51 games.")
+            self.assertFalse(info["provenance"]["held_out"])
+            self.assertFalse(info["provenance"]["in_sample_game"])
+            self.assertNotIn("fitted on this match", info["label"])
+            self.assertEqual(store.curve(game["game_id"])["reason"], EXPANSION_REASON)
+            self.assertEqual(store.heldout(game["game_id"])["reason"], EXPANSION_REASON)
+        finally:
+            clear_expansion_dirs()

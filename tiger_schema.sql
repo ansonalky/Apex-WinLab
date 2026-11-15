@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS squad_estimates (
   elimination_verified   boolean,
   PRIMARY KEY (game_id, t, team_id, prediction_kind),
   CONSTRAINT squad_estimates_kind
-    CHECK (prediction_kind IN ('held_out', 'final_model_fitted'))
+    CHECK (prediction_kind IN ('held_out', 'final_model_fitted', 'new_match'))
 );
 
 CREATE TABLE IF NOT EXISTS evaluation_reports (
@@ -103,6 +103,12 @@ ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS ts timestamptz;
 ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS model_probability_raw double precision;
 ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS eliminated boolean;
 ALTER TABLE squad_estimates ADD COLUMN IF NOT EXISTS elimination_verified boolean;
+
+-- new_match is a forward pass of models/model.json for games outside the
+-- original 51. It does not replace held_out or final_model_fitted rows.
+ALTER TABLE squad_estimates DROP CONSTRAINT IF EXISTS squad_estimates_kind;
+ALTER TABLE squad_estimates ADD CONSTRAINT squad_estimates_kind
+  CHECK (prediction_kind IN ('held_out', 'final_model_fitted', 'new_match'));
 ALTER TABLE evaluation_reports ADD COLUMN IF NOT EXISTS metrics_json text;
 
 -- Final per-game results for the performance page.

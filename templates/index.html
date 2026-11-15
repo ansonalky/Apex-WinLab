@@ -20,6 +20,14 @@
     <label>Match
       <select id="match"></select>
     </label>
+    <form id="open-match" class="open-match">
+      <label>Open Overstat match
+        <input id="overstat-url" type="url" inputmode="url" placeholder="https://overstat.gg/…" autocomplete="off" spellcheck="false">
+      </label>
+      <button type="submit" class="action">Open</button>
+      <p id="open-status" class="when" hidden></p>
+      <div id="open-choices" hidden></div>
+    </form>
     <label>Squad
       <select id="squad"></select>
     </label>

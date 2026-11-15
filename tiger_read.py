@@ -27,7 +27,8 @@ KINDS = ("held_out", "final_model_fitted")
 LIST_MATCHES = """
 SELECT m.game_id, m.session_id, m.event, m.map_name, m.quality_score, m.organizer_username,
        m.match_start, m.evaluation_split, m.winner_team_id, m.winner_team_name, m.winner_label_source,
-       EXISTS (SELECT 1 FROM squad_estimates e WHERE e.game_id = m.game_id AND e.prediction_kind = 'held_out')
+       EXISTS (SELECT 1 FROM squad_estimates e WHERE e.game_id = m.game_id AND e.prediction_kind = 'held_out'),
+       m.collection
 FROM matches m
 """
 
@@ -171,6 +172,8 @@ class TigerReader:
                 "split": row[7],
                 "winner": {"teamId": row[8], "teamName": row[9], "label_source": row[10]},
                 "heldout": bool(row[11]),
+                # NULL is a row imported before the column existed: the original dataset.
+                "collection": row[12] or "original",
             }
             for row in rows
         ])

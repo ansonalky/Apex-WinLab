@@ -19,7 +19,11 @@ window.DecisionReview = (() => {
   const h = () => window.Coach.helpers;
   const esc = (v) => h().esc(v);
   const clock = (s) => h().clock(s);
-  const kindName = (kind) => (kind === "held_out" ? "held-out" : "final model, fitted on these games (in-sample)");
+  const kindName = (kind) => (
+    kind === "held_out" ? "held-out"
+      : kind === "new_match" ? "new-match prediction · model trained on the original 51 games"
+        : "final model, fitted on these games (in-sample)"
+  );
   const optionName = (o) => ({ hold: "Hold", regroup: "Regroup", disengage: "Disengage", rotate_to_verified_position: "Rotate to a verified position", abstain: "Abstain" }[o] || o);
   const attributionName = (a) => ({ own_squad_deterioration: "Deterioration in this squad", changes_elsewhere: "Changes elsewhere", both: "Both", insufficient_evidence: "Insufficient evidence" }[a] || a);
 
@@ -45,12 +49,18 @@ window.DecisionReview = (() => {
   function episodeView() {
     const item = state.item;
     const U = window.UI;
-    return `<p><strong>${esc(item.squad_name || state.squadName)}</strong> · <span class="tag ${state.kind === "held_out" ? "heldout" : "fitted"}">${esc(kindName(state.kind))}</span></p>
+    const tagClass = state.kind === "held_out" ? "heldout" : state.kind === "new_match" ? "newmatch" : "fitted";
+    const fittedNote = state.kind === "final_model_fitted"
+      ? `<p class="when">This highlight comes from the final model, which was fitted on this match. Its estimates appear only in the retrospective part of the review.</p>`
+      : state.kind === "new_match"
+        ? `<p class="when">This highlight is a new-match prediction from the model trained on the original 51 games. It was not fitted on this match and is not a held-out evaluation.</p>`
+        : "";
+    return `<p><strong>${esc(item.squad_name || state.squadName)}</strong> · <span class="tag ${tagClass}">${esc(kindName(state.kind))}</span></p>
       <dl class="episode">
         <dt>Representative window</dt><dd>${seekChip(item.start_elapsed, U.span(item.start_elapsed, item.end_elapsed))} ${U.finite(item.window_s) ? `${item.window_s} s · ` : ""}estimate ${U.pct(item.before)} → ${U.pct(item.after)} (${U.pp(item.change_pp)})</dd>
         <dt>Full episode</dt><dd>${seekChip(item.episode_start_elapsed, U.span(item.episode_start_elapsed, item.episode_end_elapsed))} ${U.text(item.windows_merged)} overlapping window${item.windows_merged === 1 ? "" : "s"}; the change above is for the representative window only</dd>
       </dl>
-      ${state.kind !== "held_out" ? `<p class="when">This highlight comes from the final model, which was fitted on this match. Its estimates appear only in the retrospective part of the review.</p>` : ""}`;
+      ${fittedNote}`;
   }
 
   function controlsView() {

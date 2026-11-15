@@ -12,7 +12,8 @@ imported matches, else local files. The active backend, and why, is served at
 ``/api/backend`` and shown on the page.
 
 ``--expansion-dir`` adds another accepted-game directory. Those games are not
-given a frozen split or a frozen-model prediction. Maps, rings, and coaching
+given a frozen split or a held-out label. A new-match forward pass of the
+unchanged ``models/model.json`` is shown instead. Maps, rings, and coaching
 still read that directory's own replay files.
 """
 
@@ -27,13 +28,86 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request
 
 from coach import Coach, build_packet
-from dashboard_data import MatchStore, clear_expansion_dirs, register_expansion_dir
+from dashboard_data import MatchStore, clear_expansion_dirs, expansion_dirs, register_expansion_dir
 from decision_review import DECISION, build_decision_packet
-from live_predictions import FINAL, HELD_OUT, LivePredictions
+from live_predictions import FINAL, HELD_OUT, NEW_MATCH, LivePredictions
+from open_match import ApiClient, open_match
+from preview_store import PreviewStore, cleanup as cleanup_previews
+from preview_store import configure as configure_previews
+from turning_points import LABEL, HighlightCache, canonical_squad
 from map_api import map_bp, ring_at
 from tactical import TacticalIndex
 from stats_api import stats_bp
-from turning_points import LABEL, HighlightCache, canonical_squad
+
+
+class FallbackStore:
+    """Saved games from the primary store, then local files, then a temporary preview."""
+
+    def __init__(self, primary, preview: PreviewStore, files=None):
+        self.primary = primary
+        self.preview = preview
+        self.files = files
+        self._choice: dict[int, object] = {}
+
+    def _source(self, game_id: int):
+        cached = self._choice.get(game_id)
+        if cached is not None:
+            return cached
+        if self.primary.summary(game_id) is not None:
+            self._choice[game_id] = self.primary
+            return self.primary
+        if self.files is not None and self.files.summary(game_id) is not None:
+            self._choice[game_id] = self.files
+            return self.files
+        from preview_store import contains
+
+        if contains(game_id):
+            self._choice[game_id] = self.preview
+            return self.preview
+        return self.primary
+
+    def summary(self, game_id: int):
+        return self._source(game_id).summary(game_id)
+
+    def frame_at(self, game_id: int, t: int):
+        return self._source(game_id).frame_at(game_id, t)
+
+    def frame(self, game_id: int, index: int):
+        source = self._source(game_id)
+        if source is self.preview:
+            built = self.preview.summary(game_id)
+            times = (built or {}).get("times") or []
+            if not times:
+                return None
+            index = max(0, min(index, len(times) - 1))
+            return self.preview.frame_at(game_id, times[index]["t"])
+        return source.frame(game_id, index)
+
+    def curve(self, game_id: int):
+        source = self._source(game_id)
+        return source.curve(game_id) if source is not self.preview else self.preview.curve(game_id)
+
+    def heldout(self, game_id: int):
+        source = self._source(game_id)
+        return source.heldout(game_id) if source is not self.preview else self.preview.heldout(game_id)
+
+    def curve_points(self, game_id: int):
+        source = self._source(game_id)
+        if source is self.preview:
+            return self.preview.curve(game_id)
+        return source.curve_points(game_id)
+
+    def heldout_points(self, game_id: int):
+        source = self._source(game_id)
+        if source is self.preview:
+            return self.preview.heldout(game_id)
+        return source.heldout_points(game_id)
+
+    def matches(self):
+        return self.primary.matches()
+
+    def __getattr__(self, name):
+        return getattr(self.primary, name)
 
 
 def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[object, dict]:
@@ -79,6 +153,13 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         store, info = select_store(data_dir, backend)
     info = info or {"backend": getattr(store, "backend", "files"), "label": "", "detail": ""}
     root = data_dir.resolve()
+    imports = root / "user-imports"
+    if (imports / "collection" / "manifest.json").is_file():
+        register_expansion_dir(imports)
+    configure_previews(root / "previews")
+    cleanup_previews()
+    files = None if isinstance(store, MatchStore) else MatchStore(root)
+    store = FallbackStore(store, PreviewStore(), files)
     app.config["DATA_BACKEND"] = info
     # The map and ring endpoints read local replay files under either backend.
     app.config["DATA_DIR"] = root
@@ -123,14 +204,21 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         summary = store.summary(game_id)
         if summary is None:
             abort(404)
-        # Build this match's per-second predictions while the page loads.
-        threading.Thread(
-            target=lambda: [live.table(game_id, kind) for kind in (HELD_OUT, FINAL) if live.available(game_id, kind)],
-            daemon=True,
-        ).start()
+        summary = dict(summary)
+        summary["inference"] = live.inference(game_id)
+
+        def warm() -> None:
+            for kind in (HELD_OUT, FINAL):
+                if live.available(game_id, kind):
+                    live.table(game_id, kind)
+            if live.available(game_id, NEW_MATCH):
+                live.schedule(game_id)
+
+        threading.Thread(target=warm, daemon=True).start()
         summary["live"] = {
             "heldout": live.model(HELD_OUT)["provenance"] if live.available(game_id, HELD_OUT) else None,
             "final": live.model(FINAL)["provenance"] if live.available(game_id, FINAL) else None,
+            "new_match": (live.inference(game_id).get("provenance") if live.available(game_id, NEW_MATCH) else None),
         }
         return jsonify(summary)
 
@@ -151,7 +239,11 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
             abort(404)
         frame_ms = (time.perf_counter() - started) * 1000
         frame["ring"] = ring_at(game_id, frame["t"])
-        frame["live"] = {"heldout": live.at(game_id, frame["t"], HELD_OUT), "final": live.at(game_id, frame["t"], FINAL)}
+        frame["live"] = {
+            "heldout": live.at(game_id, frame["t"], HELD_OUT),
+            "final": live.at(game_id, frame["t"], FINAL),
+            "new_match": live.peek(game_id, frame["t"]),
+        }
         # Squads whose eliminated event is at or before this second, for the roster display.
         frame["eliminated_squads"] = {
             str(team): t for team, t in live.squad_eliminations(game_id).items() if t is not None and t <= frame["t"]
@@ -170,8 +262,20 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         """
         kind = request.args.get("kind", "")
         team = request.args.get("team", "")
-        if kind not in (HELD_OUT, FINAL):
-            return jsonify(highlight_error(game_id, kind, "kind must be held_out or final_model_fitted")), 400
+        if kind not in (HELD_OUT, FINAL, NEW_MATCH):
+            return jsonify(highlight_error(game_id, kind, "kind must be held_out, final_model_fitted, or new_match")), 400
+        if kind == NEW_MATCH and live.available(game_id, kind) and not live.ready(game_id, kind):
+            live.schedule(game_id)
+            return jsonify({
+                "available": False,
+                "status": "loading",
+                "label": LABEL,
+                "game_id": game_id,
+                "kind": kind,
+                "missing": ["Computing win estimates from the saved model."],
+                "up": [],
+                "down": [],
+            })
         if not team.strip():
             return jsonify(highlight_error(game_id, kind, "team is required")), 400
         summary = store.summary(game_id)
@@ -246,6 +350,26 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         if built.get("status") != "ok":
             return jsonify(built), code
         return jsonify(coach.analyze(built["packet"], DECISION) | {"packet": built["packet"], "suggested_t": built["suggested_t"]})
+
+    @app.post("/api/open-match")
+    def open_overstat():
+        body = request.get_json(silent=True) or {}
+        game_number = body.get("game_number")
+        try:
+            game_number = None if game_number in (None, "") else int(game_number)
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Choose a game number from the list."}), 400
+        result = open_match(
+            body.get("url") or "",
+            data_dirs=[root, *expansion_dirs(), root / "user-imports"],
+            import_dir=root / "user-imports",
+            cache_dir=root / "open-cache",
+            client=ApiClient(),
+            game_number=game_number,
+            database="auto",
+        )
+        code = 200 if result.get("status") in ("ready", "exists", "choose", "retry") else 400
+        return jsonify(result), code
 
     @app.get("/api/matches/<int:game_id>/curve")
     def match_curve(game_id: int):
