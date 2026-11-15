@@ -36,7 +36,7 @@ from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
 
-DECISION_PROMPT_VERSION = "decision-v2"
+DECISION_PROMPT_VERSION = "decision-v3"
 LEAD_S = 10
 MOVE_OFFSETS_S = (30, 60)
 OPTIONS = ("hold", "regroup", "disengage", "rotate_to_verified_position")
@@ -362,7 +362,8 @@ Tasks:
    For each give evidence, expected tactical benefit, cost and uncertainty, and whether it
    depends on observer-only information (see the OBSERVER item).
 4. recommendation: the best-supported option, or "abstain" if the evidence is insufficient.
-   Make it conditional on something a reviewer can check.
+   Make it conditional on something a reviewer can check. Put that clause only in "condition";
+   "rationale" explains why, starting with its most important reason, and does not repeat the condition.
 5. practice_takeaway: one concrete thing to review or practise.
 
 Feasibility rules:
@@ -428,7 +429,9 @@ def decision_schema(packet: dict) -> dict:
                 "additionalProperties": False}},
             "recommendation": {"type": "object", "properties": {
                 "choice": {"type": "string", "enum": list(OPTIONS) + ["abstain"]},
-                "condition": {"type": "string"}, "rationale": {"type": "string"}, "evidence_ids": pre_ids,
+                "condition": {"type": "string", "description": "Only the If/When clause the reviewer can check."},
+                "rationale": {"type": "string", "description": "Why this option; does not repeat the condition."},
+                "evidence_ids": pre_ids,
             }, "required": ["choice", "condition", "rationale", "evidence_ids"], "additionalProperties": False},
             "practice_takeaway": {"type": "string"},
             "missing_information": {"type": "array", "items": {"type": "string"}},

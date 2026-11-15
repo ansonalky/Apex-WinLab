@@ -47,7 +47,7 @@ from live_predictions import FINAL, HELD_OUT
 from tactical import LIMITS as TACTICAL_LIMITS
 from tactical import bearing, measure
 
-PROMPT_VERSION = "coach-v2"
+PROMPT_VERSION = "coach-v3"
 PACKET_VERSION = 1
 WINDOW_S = 60
 CHANGE_OFFSETS_S = (30, 60)
@@ -124,6 +124,8 @@ Grounding rules:
 - Recommendations must be conditional on something the reviewer can check, for example
   "If these opponents have sightlines onto this route, consider ...". One or two items,
   each either a conditional recommendation or a review question. No unconditional commands.
+  Put the condition only in "condition" (the "If ..." or "When ..." clause) and only the action or
+  question in "text". "text" must not repeat the condition. List the most useful item first.
 
 Output limits: situation_summary at most two sentences; at most three factors;
 one or two recommendations; list missing information that could change the assessment."""
@@ -512,8 +514,8 @@ def output_schema(packet: dict) -> dict:
                 "type": "object",
                 "properties": {
                     "type": {"type": "string", "enum": ["conditional_recommendation", "review_question"]},
-                    "condition": {"type": "string"},
-                    "text": {"type": "string"},
+                    "condition": {"type": "string", "description": "Only the If/When clause the reviewer can check."},
+                    "text": {"type": "string", "description": "Only the action or question; does not repeat the condition."},
                     "evidence_ids": ids,
                 },
                 "required": ["type", "condition", "text", "evidence_ids"],

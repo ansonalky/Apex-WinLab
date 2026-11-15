@@ -56,10 +56,16 @@
       <section class="card">
         <h2 class="with-action">AI Coach <span class="tag ai">AI-generated</span> <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
         <div id="coach" class="coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
-        <details class="sub" data-keep="tactical">
-          <summary>Tactical measurements <span class="when">(explanatory; not used by the model)</span></summary>
-          <div id="tactical"></div>
-        </details>
+        <div class="coach-drawers">
+          <details class="sub" data-keep="tactical">
+            <summary>Tactical measurements <span class="when">(not used by the model)</span></summary>
+            <div id="tactical"></div>
+          </details>
+          <details class="sub" data-keep="coach-review-details">
+            <summary>Review details</summary>
+            <div id="coach-details" class="coach"><p class="when">No review yet.</p></div>
+          </details>
+        </div>
         <h3>Decision review</h3>
         <div id="decision" class="coach" aria-live="polite"><p class="when">Choose “Review decision” on a “Win estimate fell” moment to review the time before it.</p></div>
       </section>

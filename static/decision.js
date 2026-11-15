@@ -103,7 +103,7 @@ window.DecisionReview = (() => {
     const weaknesses = (a.weaknesses || []).map((w) => `<article class="factor disadvantage">
         <header><strong>${esc(w.name)}</strong></header>
         <div class="facts"><span class="section-label">Observed facts at or before ${esc(p.clock)}</span>${facts(w.observed, p)}</div>
-        <div class="interp"><span class="section-label">Interpretation (AI)</span><p>${esc(w.interpretation)}</p></div>
+        <div class="interp"><span class="section-label">Interpretation</span><p>${esc(w.interpretation)}</p></div>
         ${w.uncertainty ? `<div class="uncert"><span class="section-label">Uncertainty</span><p>${esc(w.uncertainty)}</p></div>` : ""}
       </article>`).join("") || `<p class="when">No weakness is supported by the evidence at this time.</p>`;
     const options = (a.options || []).map((o) => {
@@ -113,11 +113,11 @@ window.DecisionReview = (() => {
         : `<p class="when">No destination position.</p>`;
       const observer = o.observer_only || {};
       return `<article class="factor option${chosen ? " chosen" : ""}">
-        <header><strong>${esc(optionName(o.option))}</strong>${chosen ? '<span class="tag ai">recommended</span>' : ""}</header>
+        <header><strong>${esc(optionName(o.option))}</strong>${chosen ? '<span class="tag">recommended</span>' : ""}</header>
         ${destination}
         <div class="facts"><span class="section-label">Evidence</span>${facts(o.evidence, p)}</div>
-        <div class="interp"><span class="section-label">Expected tactical benefit (AI)</span><p>${esc(o.expected_benefit)}</p></div>
-        <div class="interp"><span class="section-label">Cost (AI)</span><p>${esc(o.cost)}</p></div>
+        <div class="interp"><span class="section-label">Expected tactical benefit</span><p>${esc(o.expected_benefit)}</p></div>
+        <div class="interp"><span class="section-label">Cost</span><p>${esc(o.cost)}</p></div>
         <div class="uncert"><span class="section-label">Uncertainty</span><p>${esc(o.uncertainty)}</p></div>
         <p class="when"><span class="tag">${observer.depends ? "relies on observer-only information" : "uses information the squad could perceive"}</span>${esc(observer.explanation || "")}</p>
       </article>`;
@@ -125,20 +125,45 @@ window.DecisionReview = (() => {
     const attribution = a.drop_attribution || {};
     const missing = (a.missing_information || []).map((m) => `<li>${esc(m)}</li>`).join("");
     const count = (a.options || []).length;
+    // Lead with the chosen option, its condition once, and why.
+    const h = window.Coach.helpers;
+    const chosen = (a.options || []).find((o) => o.option === rec.choice);
+    const destination = chosen && chosen.destination_ref && chosen.destination_ref !== "none" ? (p.items.find((i) => i.id === chosen.destination_ref) || {}).label?.replace(/^Reference: /, "") || "" : "";
+    const move = rec.choice && rec.choice !== "abstain"
+      ? h.nextMove({
+        action: `${esc(optionName(rec.choice))}${destination ? ` <span class="when">toward ${esc(destination)}; route not verified</span>` : ""}`,
+        condition: esc(rec.condition || ""),
+        why: esc(h.firstSentence(h.withoutCondition(rec.rationale, rec.condition))),
+      })
+      : h.nextMove({ check: esc(rec.condition || (a.missing_information || [])[0] || h.firstSentence(rec.rationale)) });
+    const usage = meta.usage || {};
+    const details = [
+      ["Review", `${esc(r.squad_name)} at ${esc(r.clock)} (replay t ${esc(r.t)}); evidence ${esc(r.window.start_clock)}–${esc(r.window.end_clock)}; retrospective ${esc(p.retrospective.from_clock)}–${esc(p.retrospective.to_clock)}`],
+      ["Provider", esc(r.provider || "Unknown")],
+      ["Model", `${esc(r.model || "Unknown")}${served}`],
+      ["Thinking level", esc(r.effort || "model default")],
+      ["Prompt", esc(r.prompt_version || "Unknown")],
+      ["Generated", esc(r.generated_at || "Unknown")],
+      ["Latency", r.cached ? "served from cache" : r.latency_s != null ? `${esc(r.latency_s)} s` : "Unknown"],
+      ["Cache", r.cached ? "from cache (same evidence, provider, model and prompt)" : "new response, now cached"],
+      ["Tokens", usage.input_tokens != null ? `${esc(usage.input_tokens)} in · ${esc(usage.output_tokens)} out${usage.thinking_tokens != null ? ` · ${esc(usage.thinking_tokens)} thinking` : ""}` : "Unknown"],
+    ];
     return `<div class="stale-slot"></div>
-      <p class="review-head"><span class="tag ai">AI-generated · reviewable</span><strong>Decision review at ${esc(r.clock)}</strong> <span class="when">· evidence ${esc(r.window.start_clock)}–${esc(r.window.end_clock)} · retrospective ${esc(p.retrospective.from_clock)}–${esc(p.retrospective.to_clock)}</span></p>
-      <p class="when small">${esc(r.label || "")} ${esc(r.provider)} · ${esc(r.model)}${served} · effort ${esc(r.effort || "default")} · prompt ${esc(r.prompt_version)} · ${r.cached ? "from cache, " : ""}generated ${esc(r.generated_at || "")}.</p>
-      <span class="section-label">Recommendation (AI, conditional)</span>
-      <ul class="recs"><li class="rec"><span class="tag">${esc(optionName(rec.choice))}</span>${rec.condition ? `<em>${esc(rec.condition)}</em> — ` : ""}${esc(rec.rationale)} ${chips(rec.evidence_ids, p)}</li></ul>
-      <span class="section-label">Review or practice takeaway</span>
-      <p>${esc(a.practice_takeaway)}</p>
-      <span class="section-label">Estimate drop, retrospective (association, not cause)</span>
-      <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div>
+      <p class="review-for"><strong>${esc(r.squad_name)}</strong> · decision reviewed at <strong>${esc(r.clock)}</strong></p>
+      ${move}
+      <p class="takeaway"><strong>Practice:</strong> ${esc(a.practice_takeaway)}</p>
+      <details class="sub"><summary>Why the estimate fell <span class="when">(retrospective; association, not cause)</span></summary>
+        <div class="retro-block"><p><span class="tag">${esc(attributionName(attribution.category))}</span>${esc(attribution.explanation)} ${chips(attribution.evidence_ids, p)}</p></div></details>
       <details class="sub"><summary>Weaknesses at the decision time (${(a.weaknesses || []).length})</summary>${weaknesses}</details>
-      <details class="sub"><summary>Alternatives compared (${count}) · no win probability is given for unplayed options</summary>${options}
+      <details class="sub"><summary>Alternatives compared (${count}) · no win probability for unplayed options</summary>${options}
         ${missing ? `<span class="section-label">Missing information that could change this</span><ul class="missing">${missing}</ul>` : ""}
       </details>
-      ${packetView(p)}`;
+      <details class="sub"><summary>Review details</summary>
+        <p class="when">${esc(r.label || "")}</p>
+        <dl class="facts">${details.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+        <span class="section-label">Evidence cited by the recommendation</span><p>${chips(rec.evidence_ids, p) || '<span class="when">none</span>'}</p>
+        ${packetView(p)}
+      </details>`;
   }
 
   function setupView(r) {

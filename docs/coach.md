@@ -6,6 +6,37 @@ Code: `coach.py` (packet, checks, provider, cache), `static/coach.js` (panel), r
 
 Downward highlights also have a **Review decision** flow built on the same packet, provider and cache: see [decision-review.md](decision-review.md).
 
+## Coach card layout (prompts `coach-v3` and `decision-v3`)
+
+The AI Coach card has one heading, one *AI-generated* badge and one **Analyze this situation** button.
+
+1. **Recommended action** comes first. In the situation review it is the first conditional recommendation, with its condition shown once and **Why**: the first sentence of the interpretation of the factor that shares the most evidence with it. In the decision review it is the chosen option (and its known destination, "route not verified"), its condition and the first sentence of the rationale. With no supportable recommendation, or an abstaining decision review, it says what to check first instead.
+2. The squad and the reviewed MM:SS stay visible. The stale-review warning stays visible too, for an earlier or later time or another squad.
+3. Expandable sections hold everything else:
+   - situation review: the situation summary, then alternatives and review questions;
+   - decision review: the retrospective drop explanation, the weaknesses, and the alternatives compared.
+4. **Review details** sits beside *Tactical measurements* (and inside the decision panel). It holds the provider, model, thinking level, prompt, generation time, latency, cache status, tokens, request ID, packet hash, the evidence IDs with clickable timestamps, the factors, missing information and the packet.
+
+Opening a section never seeks or calls the provider. Evidence chips seek through the slider path.
+
+**Repeated condition.** Of the cached situation reviews, one `coach-v2` response put its whole `condition` at the start of `text` as well. The renderer printed `condition — text`, so the condition appeared twice. Two changes:
+
+- From `coach-v3` / `decision-v3`, the schema descriptions and prompts say that `condition` holds only the If/When clause and `text` (or `rationale`) only the action or reason.
+- For older cached responses, the display drops a leading copy of the condition from the text. Stored responses and validation are unchanged.
+
+The prompt-version change means reviews cached under v1/v2 are not served again for new requests. They still render correctly if loaded.
+
+Real results while checking, game 123633, Meaningless:
+
+| Review | Result |
+| --- | --- |
+| Situation, 13:47 | accepted, 22 s; served from cache 0.5 s on repeat |
+| Decision, 13:47, try 1 | rejected: "sightlines of additional squads" |
+| Decision, 13:47, try 2 | rejected: "coordinate cover" |
+| Decision, 13:47, try 3 | accepted, 38 s |
+
+The grounding checks are unchanged.
+
 ## Configuration
 
 The default provider is **Gemini**, through the official Google GenAI SDK (`google-genai`), with the output schema sent as `response_json_schema`. Anthropic is still implemented and can be selected explicitly. Only the configured provider is called. If it fails, the error is shown, and the coach never falls back to another provider.

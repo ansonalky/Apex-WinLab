@@ -205,3 +205,16 @@ dialog#model-details .dialog-body { padding: 0.4rem 1rem 1rem; }
 dialog#model-details section { border-bottom: 1px solid #2c3340; padding: 0.4rem 0 0.8rem; }
 dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
 .side .coach details > summary { font-size: 0.85rem; color: #b7beca; cursor: pointer; }
+/* AI Coach: recommended action first; details on demand. */
+.side .review-for { margin: 0 0 0.35rem; font-size: 0.85rem; color: #b7beca; }
+.side .review-for strong { color: #e7e9ee; }
+.side .next-move { border-left: 3px solid #d4b8f0; background: #1e1a26; border-radius: 6px; padding: 0.45rem 0.65rem; margin: 0.2rem 0 0.4rem; }
+.side .next-move.none { border-left-color: #f0c674; background: #2a2618; }
+.side .next-move .section-label { margin-top: 0; }
+.side .next-move .action { font-size: 1rem; font-weight: 600; margin: 0.1rem 0; }
+.side .next-move .condition { font-size: 0.85rem; font-style: italic; color: #c9c2d6; margin: 0.1rem 0; }
+.side .next-move .why { font-size: 0.88rem; margin: 0.25rem 0 0; }
+.side .takeaway { font-size: 0.88rem; }
+.side .coach-drawers { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; align-items: start; margin-top: 0.5rem; }
+.side .coach-drawers > details { margin-top: 0; min-width: 0; }
+.side .coach-drawers > details[open] { grid-column: 1 / -1; }
