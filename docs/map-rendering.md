@@ -29,3 +29,8 @@ The UI says the map is unsupported and does not stretch another image.
 Game 123349 checked against the recorded rings: at t=100 the stage-0
 ring is waiting (125s, radius 67999.9453); at t=355 it is halfway
 closed (radius 47249.97265); at t=550 stage 1 is waiting.
+
+The same camera draws the image, player dots, labels, and the ring.
+Zoom is 1×–8×, centered on the pointer, and drag pans. Dots and the
+ring stroke stay a constant screen size. Reset returns to the full
+map. A different map id clears the camera. Seeking does not.
