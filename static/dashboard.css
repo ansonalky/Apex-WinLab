@@ -139,6 +139,9 @@ table.probs tr.selected button.squad-name { font-weight: 600; }
 .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; }
 .topbar .nav { margin: 0; }
 .topbar #details-open { margin-left: auto; }
+#start-here { padding: 0.2rem 0.55rem; }
+.start-hint, .start-status { flex-basis: 100%; margin: 0; }
+#start-hint[hidden], #start-status[hidden] { display: none !important; }
 .badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 99px; background: #2c3340; color: #b7beca; }
 .badge.tiger { background: #1f4a33; color: #8cd17d; }
 .badge.files { background: #4a3a1f; color: #ffbe7d; }

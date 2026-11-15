@@ -15,6 +15,7 @@ window.DecisionReview = (() => {
   let lastRequest = null;
   let token = 0;
   let controller = null;
+  let running = false;
 
   const h = () => window.Coach.helpers;
   const esc = (v) => h().esc(v);
@@ -197,7 +198,8 @@ window.DecisionReview = (() => {
 
   function errorView(r, request) {
     const problems = (r.problems || []).map((p) => `<li>${esc(p)}</li>`).join("");
-    return `<p class="unavailable"><strong>No review for ${clock(request.elapsed)}.</strong> ${esc(r.error || r.reason || "The request failed.")}</p>
+    const who = request && request.squadName ? `${esc(request.squadName)} at ` : "";
+    return `<p class="unavailable"><strong>No review for ${who}${clock(request.elapsed)}.</strong> ${esc(r.error || r.reason || "The request failed.")}</p>
       ${problems ? `<details open><summary>Checks that failed</summary><ul>${problems}</ul></details>` : ""}
       <p class="when">${r.kind ? `Kind: ${esc(r.kind)}. ` : ""}No earlier review is shown in its place.</p>
       ${r.retryable !== false ? `<p><button type="button" class="action" data-decision="retry">Retry ${clock(request.elapsed)}</button></p>` : ""}
@@ -236,7 +238,9 @@ window.DecisionReview = (() => {
     if (!slot || !now) return;
     const notice = (text, explanation, viewing) =>
       `<p class="stale tip${viewing ? " viewing" : ""}" tabindex="0" data-tip="${esc(explanation)}">${text}<span class="sr-only"> ${esc(explanation)}</span></p>`;
-    if (String(now.team) !== String(state.team)) {
+    if (String(now.game) !== String(state.game)) {
+      slot.innerHTML = notice("Review: another match", "This review is for another match; it does not describe what is shown.");
+    } else if (String(now.team) !== String(state.team)) {
       slot.innerHTML = notice(
         `Review: ${state.teamTag(state.team, state.squadName)} ${esc(result.clock)} · Viewing: ${state.teamTag(now.team)} ${clock(now.elapsed)}`,
         `This review is for ${state.squadName} at ${result.clock}. Another squad is selected now.`,
@@ -278,15 +282,23 @@ window.DecisionReview = (() => {
     return elapsed;
   }
 
+  function setRunEnabled(enabled) {
+    const runButton = box && box.querySelector("[data-decision='run']");
+    if (runButton) runButton.disabled = !enabled;
+  }
+
   async function run(request) {
+    if (running || !request || !state) return;
     lastRequest = request;
     const mine = ++token;
-    if (controller) controller.abort("cancel");
+    running = true;
+    setRunEnabled(false);
     controller = new AbortController();
     const timer = setTimeout(() => controller.abort("timeout"), 105000);
     result = null;
     redraw();
-    setBody(`<p class="when">Reviewing ${esc(state.squadName)} at ${clock(request.elapsed)}. The replay stays usable while this runs.</p><p><button type="button" class="action quiet" data-decision="cancel">Cancel</button></p>`);
+    setBody(`${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}<p><button type="button" class="action quiet" data-decision="cancel">Cancel</button></p>`);
+    const stopClock = ReviewStatus.startClock(box.querySelector(".decision-body"), ReviewStatus.announce);
     let r;
     try {
       const response = await fetch(`/api/matches/${request.game}/decision-review`, {
@@ -297,11 +309,14 @@ window.DecisionReview = (() => {
       });
       r = await response.json().catch(() => ({ status: "error", error: `HTTP ${response.status}`, retryable: true }));
     } catch (error) {
-      r = controller.signal.reason === "timeout"
-        ? { status: "error", kind: "timeout", error: "The review timed out.", retryable: true }
-        : { status: "error", kind: "cancelled", error: "The review was cancelled.", retryable: true };
+      r = ReviewStatus.classifyFailure(controller.signal);
     } finally {
       clearTimeout(timer);
+      stopClock();
+      if (mine === token) {
+        running = false;
+        setRunEnabled(true);
+      }
     }
     if (mine !== token || !state) return;
     try {
@@ -317,23 +332,27 @@ window.DecisionReview = (() => {
       } else {
         setBody(errorView(r, request));
       }
+      ReviewStatus.announce(ReviewStatus.completionAnnouncement(r));
     } catch (error) {
       console.error(error);
       setBody(`<p class="unavailable">The review could not be displayed.</p>`);
+      ReviewStatus.announce("Review failed");
     }
   }
 
   function startReview() {
+    if (running) return;
     const elapsed = readTime();
     if (elapsed === null) return;
     seekTo(elapsed);
     run({
-      game: state.game, team: state.team, kind: state.kind, elapsed,
+      game: state.game, team: state.team, squadName: state.squadName, kind: state.kind, elapsed,
       start_t: state.item.start_t, episode_start_t: state.item.episode_start_t, decision_t: state.start + elapsed,
     });
   }
 
   function open(item) {
+    if (running) return;
     const now = context();
     if (!now || !box) return;
     token += 1;
@@ -364,7 +383,7 @@ window.DecisionReview = (() => {
       if (what === "run") startReview();
       else if (what === "seek") { const e = readTime(); if (e !== null) seekTo(e); }
       else if (what === "suggested") { state.decisionElapsed = state.suggestedElapsed; box.querySelector("#decision-time").value = clock(state.suggestedElapsed); showError(""); updatePin(); }
-      else if (what === "retry" && lastRequest) { seekTo(lastRequest.elapsed); run(lastRequest); }
+      else if (what === "retry" && lastRequest && !running) { seekTo(lastRequest.elapsed); run(lastRequest); }
       else if (what === "cancel" && controller) controller.abort("cancel");
     } catch (error) {
       console.error(error);
@@ -383,6 +402,7 @@ window.DecisionReview = (() => {
   }
 
   function reset() {
+    if (running) return;
     token += 1;
     if (controller) controller.abort("cancel");
     state = null;

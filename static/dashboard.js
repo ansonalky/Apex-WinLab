@@ -29,6 +29,11 @@ let backendInfo = null;
 let mapConfig = null;
 let currentRing = null;
 let requestToken = 0;
+let activeLoad = null;
+// Confirmed in the local replay: team 20 is EQT, both alive at 18:47, NAGGI downed at 18:48.
+const START_GAME = "123633";
+const START_TEAM = "20";
+const START_ELAPSED = 18 * 60 + 47;
 // At most one frame request runs at a time. Slider input that arrives while
 // it runs only replaces pendingSeek, so a fast scrub asks for its newest value
 // next and skips the ones in between.
@@ -225,7 +230,87 @@ function membershipWarning() {
   return "";
 }
 
+function setStartStatus(message, isError) {
+  const status = document.querySelector("#start-status");
+  if (!status) return;
+  status.hidden = !message;
+  status.textContent = message || "";
+  status.classList.toggle("unavailable", Boolean(isError && message));
+}
+
+function showStartHint() {
+  const hint = document.querySelector("#start-hint");
+  if (hint) hint.hidden = false;
+}
+
+// `t` is match-relative slider seconds, and only for the linked game.
+function linkedSliderTime(gameId) {
+  const params = new URLSearchParams(location.search);
+  if (params.get("game") !== String(gameId)) return null;
+  const raw = params.get("t");
+  if (raw == null || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+function rememberStartLink() {
+  const params = new URLSearchParams(location.search);
+  params.set("game", START_GAME);
+  params.set("team", START_TEAM);
+  params.set("t", String(START_ELAPSED));
+  history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
+}
+
+// Opens the checked demo moment. It never requests a situation or decision review.
+// A match that is already loaded is only reselected and seeked, so the map
+// camera stays where it is. map_view.js resets the camera itself when the map changes.
+async function startHere() {
+  showStartHint();
+  const listed = [...matchSelect.options].some((option) => option.value === START_GAME);
+  if (!listed) {
+    setStartStatus("Demo match 123633 is not available.", true);
+    return;
+  }
+  rememberStartLink();
+  const ready = summary && String(summary.game_id) === START_GAME && !timeInput.disabled;
+  if (!ready) {
+    if (activeLoad && matchSelect.value === START_GAME) await activeLoad;
+    else {
+      matchSelect.value = START_GAME;
+      await loadMatch(START_GAME);
+    }
+  }
+  if (!summary || String(summary.game_id) !== START_GAME) {
+    setStartStatus("Demo match 123633 could not be loaded.", true);
+    timeInput.disabled = false;
+    return;
+  }
+  if (![...squadSelect.options].some((option) => option.value === START_TEAM)) {
+    setStartStatus("EQT (team 20) is not in this match.", true);
+    return;
+  }
+  const maxElapsed = Number(timeInput.max);
+  if (!(maxElapsed >= START_ELAPSED)) {
+    setStartStatus("18:47 is outside this replay.", true);
+    return;
+  }
+  squadSelect.value = START_TEAM;
+  applySquadSelection();
+  timeInput.value = String(START_ELAPSED);
+  seek(START_ELAPSED);
+  setStartStatus("");
+}
+
 async function loadMatch(gameId) {
+  const run = loadMatchBody(gameId);
+  activeLoad = run;
+  try {
+    return await run;
+  } finally {
+    if (activeLoad === run) activeLoad = null;
+  }
+}
+
+async function loadMatchBody(gameId) {
   const token = ++requestToken;
   if (inFlight) inFlight.controller.abort();
   inFlight = null;
@@ -246,6 +331,7 @@ async function loadMatch(gameId) {
   } catch (error) {
     if (token !== requestToken) return;
     meta.textContent = `Match ${gameId} could not be loaded.`;
+    timeInput.disabled = false;
     for (const box of Object.values(momentBoxes)) box.innerHTML = `<p class="unavailable">Could not load key moments.</p>`;
     console.error(error);
     return;
@@ -287,16 +373,23 @@ async function loadMatch(gameId) {
     squadSelect.value = String(summary.winner.teamId);
   }
   // Bounds are set once per match, from its first and last stored replay second.
+  const maxElapsed = Math.max(0, (summary.last_t ?? replayStart()) - replayStart());
+  const requestedTime = linkedSliderTime(gameId);
+  const initialElapsed = requestedTime == null ? 0 : Math.min(requestedTime, maxElapsed);
   timeInput.min = "0";
-  timeInput.max = String(Math.max(0, (summary.last_t ?? replayStart()) - replayStart()));
-  timeInput.value = "0";
+  timeInput.max = String(maxElapsed);
+  timeInput.value = String(initialElapsed);
   timeInput.disabled = false;
   frame = null;
   currentRing = null;
-  clock.textContent = mmss(0);
+  clock.textContent = mmss(initialElapsed);
   renderDetails();
   loadHighlights();
-  await loadFrame(0);
+  if (requestedTime != null && requestedTime > maxElapsed) {
+    setStartStatus(`That time is past the end of this replay. Showing ${mmss(initialElapsed)}.`);
+  }
+  if (String(gameId) === START_GAME && squadSelect.value === START_TEAM && initialElapsed === START_ELAPSED) showStartHint();
+  await loadFrame(initialElapsed);
 }
 
 // The selected time shows at once; the displayed frame's own time is labeled
@@ -1093,6 +1186,16 @@ function selectSquad(teamId) {
 window.ApexMap.onSelect = selectSquad;
 window.addEventListener("map-image", () => { if (frame) draw(); });
 matchSelect.addEventListener("change", () => loadMatch(matchSelect.value));
+const startButton = document.querySelector("#start-here");
+if (startButton) {
+  startButton.addEventListener("click", () => {
+    startHere().catch((error) => {
+      console.error(error);
+      timeInput.disabled = false;
+      setStartStatus("Demo match 123633 could not be loaded.", true);
+    });
+  });
+}
 squadSelect.addEventListener("change", applySquadSelection);
 for (const box of [estimateBox, provenanceBox, altBox]) {
   box.addEventListener("pointerdown", (event) => {
@@ -1225,7 +1328,7 @@ document.querySelector("#open-match").addEventListener("submit", (event) => {
 // Help bubbles: hover and keyboard focus show them, click or tap pins them,
 // and Escape dismisses. The bubble stays open while the pointer moves into it.
 function installHelp() {
-  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #coach-run, .topbar a, .topbar h1";
+  const ESSENTIAL = "#match, #squad, #time, #overstat-url, #open-match button, #plot, #details-open, #start-here, #start-hint, #start-status, #coach-run, .topbar a, .topbar h1";
   let hideTimer = null;
 
   function bubbleOf(help) { return help.querySelector(".help-bubble"); }

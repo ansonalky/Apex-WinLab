@@ -13,6 +13,10 @@
       <a href="/" aria-current="page">Match Explorer</a>
       <a href="/stats">Performance</a>
     </nav>
+    <button id="start-here" type="button" class="action quiet">Start here</button>
+    <p id="start-hint" class="when start-hint" hidden>Explore the moment, then review the decision.</p>
+    <p id="start-status" class="when start-status" role="status" hidden></p>
+    <div id="ai-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <button id="details-open" type="button" class="action quiet">Model details</button>
   </header>
   <section class="controls">
@@ -99,6 +103,7 @@
       <section><h3>Held-out evaluation · all test games</h3><div id="evaluation"></div></section>
     </div>
   </dialog>
+  <script src="/static/review_status.js"></script>
   <script src="/static/map_view.js"></script>
   <script src="/static/ui.js"></script>
   <script src="/static/tactical.js"></script>

@@ -240,19 +240,21 @@ window.Coach = (() => {
   }
 
   async function run(request) {
-    if (!box || !request) return;
+    if (running || !box || !request) return;
     lastRequest = request;
     teams = teamsFor(request.squads);
     const mine = ++token;
-    if (controller) controller.abort();
+    running = true;
+    if (button) button.disabled = true;
+    box.setAttribute("aria-busy", "true");
     controller = new AbortController();
     const timeoutMs = 1000 * ((status && status.timeout_s) || 90) + 15000;
     const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
     shownResult = null;
-    running = true;
-    box.innerHTML = `<p class="when">Analyzing ${esc(request.squadName)} at ${clock(request.elapsed)} (evidence from up to 60 s before). The replay stays usable while this runs.</p>
+    box.innerHTML = `${ReviewStatus.loadingMarkup(esc(request.squadName), clock(request.elapsed))}
       <p><button type="button" class="action quiet" data-coach="cancel">Cancel</button></p>`;
-    setDetails(`<p class="when">Waiting for the review.</p>`);
+    setDetails(`<p class="when">Waiting for the review of ${esc(request.squadName)} at ${clock(request.elapsed)}.</p>`);
+    const stopClock = ReviewStatus.startClock(box, ReviewStatus.announce);
     let result;
     try {
       const response = await fetch(`/api/matches/${request.game}/coach`, {
@@ -263,14 +265,17 @@ window.Coach = (() => {
       });
       result = await response.json().catch(() => ({ status: "error", error: `HTTP ${response.status}`, retryable: true }));
     } catch (error) {
-      result = controller.signal.reason === "timeout"
-        ? { status: "error", kind: "timeout", error: "The analysis timed out.", retryable: true }
-        : { status: "error", kind: "cancelled", error: "The analysis was cancelled.", retryable: true };
+      result = ReviewStatus.classifyFailure(controller.signal);
     } finally {
       clearTimeout(timer);
+      stopClock();
+      if (mine === token) {
+        running = false;
+        if (button) button.disabled = false;
+        box.setAttribute("aria-busy", "false");
+      }
     }
     if (mine !== token) return;
-    running = false;
     try {
       if (result.status === "ok") {
         shownResult = result;
@@ -287,13 +292,16 @@ window.Coach = (() => {
         box.innerHTML = errorView(result, request);
         setDetails(packetDetails(result.packet) || `<p class="when">No review.</p>`);
       }
+      ReviewStatus.announce(ReviewStatus.completionAnnouncement(result));
     } catch (error) {
       console.error(error);
       box.innerHTML = `<p class="unavailable">The review could not be displayed.</p>`;
+      ReviewStatus.announce("Review failed");
     }
   }
 
   function start() {
+    if (running) return;
     const request = context();
     if (!request) return;
     run(request);
@@ -311,8 +319,9 @@ window.Coach = (() => {
     }
     const action = event.target.closest("button[data-coach]");
     if (!action) return;
-    if (action.dataset.coach === "retry") run(lastRequest);
-    else if (action.dataset.coach === "cancel" && controller) controller.abort("cancel");
+    if (action.dataset.coach === "retry") {
+      if (!running) run(lastRequest);
+    } else if (action.dataset.coach === "cancel" && controller) controller.abort("cancel");
   }
   box && box.addEventListener("click", onClick);
   detailsBox && detailsBox.addEventListener("click", onClick);
@@ -341,14 +350,19 @@ window.Coach = (() => {
     loadStatus();
   }
 
-  // A new match: an old review's evidence cannot be sought in it.
+  // A finished review is cleared for a new match. An in-flight review keeps its
+  // original match, squad and time, and is labeled stale if the selection moves.
   function reset() {
+    if (running) return;
     token += 1;
     if (controller) controller.abort("cancel");
     shownResult = null;
-    running = false;
     setDetails(`<p class="when">No review yet.</p>`);
-    if (box) loadStatus();
+    if (button) button.disabled = false;
+    if (box) {
+      box.setAttribute("aria-busy", "false");
+      loadStatus();
+    }
   }
 
   return { init, update, reset, helpers: { esc, clock, chips, itemsById, withoutCondition, firstSentence, nextMove, teamsFor } };
