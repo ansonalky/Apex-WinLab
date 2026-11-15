@@ -442,8 +442,12 @@ async function loadMatchBody(gameId) {
   } else if (summary.winner && summary.squads.some((squad) => String(squad.teamId) === String(summary.winner.teamId))) {
     squadSelect.value = String(summary.winner.teamId);
   }
-  // Bounds are set once per match, from its first and last stored replay second.
-  const maxElapsed = Math.max(0, (summary.last_t ?? replayStart()) - replayStart());
+  // Bounds are set once per match: from the first stored replay second to the
+  // second the champion is decided (WinnerDetermined). The downtime the replay
+  // keeps recording after that is cut; without a recorded win, the last stored second.
+  const lastElapsed = Math.max(0, (summary.last_t ?? replayStart()) - replayStart());
+  const wonAt = Number(summary.conclusion_elapsed);
+  const maxElapsed = summary.conclusion_elapsed != null && Number.isFinite(wonAt) && wonAt >= 0 ? Math.min(lastElapsed, wonAt) : lastElapsed;
   const requestedTime = linkedSliderTime(gameId);
   const initialElapsed = requestedTime == null ? 0 : Math.min(requestedTime, maxElapsed);
   timeInput.min = "0";
