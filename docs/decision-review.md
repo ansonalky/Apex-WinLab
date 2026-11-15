@@ -63,7 +63,7 @@ The request uses the structured output schema. Recommendation evidence enums lis
 - an option is compared twice, or there are more than 3 options;
 - the recommendation names an option that was not compared;
 - an option or the recommendation gives a probability or `%` for an unplayed alternative;
-- a sentence mentions cover, sightlines, buildings or a safe route without hedging it with *if*, *unknown*, *not*, *may* and similar words (`missing_information` is exempt);
+- it states that cover, sightlines, buildings, high-ground control or a safe route exists, under the shared clause-level standard in [coach.md](coach.md#terrain-grounding-both-reviews-prompts-coach-v2-and-decision-v2) (the same check as the situation review);
 - it fails the coach's number, time and causal/outcome checks.
 
 ## UI

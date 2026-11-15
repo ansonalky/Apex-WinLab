@@ -121,4 +121,31 @@ A repeat request was served from the cache. Earlier Anthropic-era checks, which 
   - The first real response was **rejected** by the cover/route check, and its practice takeaway was withheld. Retry was offered and no older review was shown.
   - The retry was accepted in 28 s. Retrospective chips appeared only in the drop attribution, and the regroup marker was drawn at Alel's known position. It stayed aligned at 2.6× zoom.
 
-**Observed limitation:** the situation review has no cover/route wording check (the decision review does). One real quiet-moment recommendation said "hold cover" inside a sightline condition. Read recommendations as prompts to check the replay, not as terrain facts.
+## Terrain grounding (both reviews, prompts `coach-v2` and `decision-v2`)
+
+No packet contains terrain, cover or line-of-sight data. `coach.terrain_claims` applies one standard to the situation review and the decision review. It finds mentions of these features:
+
+- cover;
+- sightlines or line of sight;
+- buildings;
+- high-ground control;
+- a safe, clear or protected route.
+
+It then classifies each mention by its role in the sentence, not by banning words. A mention is **allowed** when:
+
+- it is in a **question**;
+- it is inside or after a **condition** in the same sentence ("If a covered path exists …, regroup"; "…, provided the path is safe"), or it is in a recommendation that has a condition field;
+- it is in a clause that marks it **unknown, absent, denied or to be checked** ("without verified cover", "does not establish line of sight", "review whether it has cover").
+
+Any other mention is a **claim that the feature exists**, such as "share cover" or "the route to Alel is safe", and the response is rejected. Hedges are scoped to their clause, so "Alel has cover, though the route may be exposed" is rejected for the first clause. Uncertainty, missing information and condition fields state what is unknown or assumed, so they are not checked as claims. The same rule is stated in both system prompts. Tests use the real Gemini sentences (`tests/test_grounding.py`).
+
+Real reviews after the change (game 123633, team 11):
+
+| Review | Result | Latency |
+| --- | --- | --- |
+| Quiet, 11:31 | accepted | 24.9 s |
+| Decision, 13:47 | accepted | 31.1 s |
+| Engagement, 14:15, first try | rejected for the time "14:12", which is not in the evidence | — |
+| Engagement, 14:15, retry | accepted | 26.8 s |
+
+Every accepted terrain mention was conditional or stated as unknown. Ring wording matched the shared labels: "Ring 2 closed · ring 3 next", "Ring 3 closed · ring 4 next" and "Ring 4 closing". The prompts tell the model to use `label`/`ring_number` and never `stage_raw`.

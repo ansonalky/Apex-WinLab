@@ -427,12 +427,13 @@ function mapCordR(value, spec) {
 }
 
 function ringText(ring) {
-  if (ring && ring.state === "closing_unrecorded") return `Ring ${ring.stage} · closing; the replay ends before this ring's end, so it is not drawn`;
+  // ring.label is the shared server-side label (ring N = N-th closure); ring.stage stays the raw index.
+  if (ring && ring.state === "closing_unrecorded") return `${ring.label}; the replay ends before this ring's end, so it is not drawn`;
   if (ring && ring.state === "unavailable") return "Ring: not available at this time";
   if (!ring || ring.state === "none" || !ring.location) return "Ring: none at this time";
   const countdown = ring.countdown_s == null ? "" : ` ${formatClock(ring.countdown_s)}`;
-  const state = ring.state === "closing" ? "closing" : "waiting";
-  return `Ring ${ring.stage} · ${state}${countdown}`;
+  if (!countdown) return ring.label;
+  return ring.state === "closing" ? `${ring.label} ·${countdown} left` : `${ring.label} · closes in${countdown}`;
 }
 
 function formatClock(seconds) {

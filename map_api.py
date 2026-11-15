@@ -7,6 +7,7 @@ from pathlib import Path
 from flask import Blueprint, current_app, jsonify, request
 
 from map_config import current_ring, load_rings, public_config
+from ring_label import NEXT_TO_CLOSE, ring_label
 
 map_bp = Blueprint("map_view", __name__)
 _rings: dict[int, list] = {}
@@ -24,6 +25,8 @@ def _rings_for(game_id: int) -> list:
 
 def ring_at(game_id: int, t: int) -> dict:
     state = current_ring(_rings_for(game_id), t)
+    # Shared user-facing label; the raw ``stage`` (next ring to close while waiting) is kept.
+    state.update(ring_label(state.get("state"), state.get("stage"), NEXT_TO_CLOSE))
     state["t"] = t
     state["show_future"] = False
     return state

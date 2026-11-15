@@ -36,7 +36,14 @@ Bearings are on the map image: north is up (replay +y), east is right (replay +x
 | `elevation` | `squad_z` (mean fresh z of standing members), opposing squads compared within 8,000 u, `higher_than`, `lower_than`, `mean_dz` (positive: this squad is higher) |
 | `fire` | Damage events to this squad in the window: `damage_taken`, split into `from_opponents`, `from_ring`, `from_other_environment` and `from_own_squad`. Per attacking squad: damage, hits, last hit, and the mean bearing from victim to attacker at hit time |
 | `pressure` | Opposing squads with fresh standing positions: distance, band, bearing, sector, `dz`; near and medium counts; sector counts; `too_close_for_bearing` |
-| `ring` | `known`, `phase` (`closing`, `waiting`, `not_revealed`, `closing_target_unknown`), `stage`, `closing_remaining_s`; when known: `radius`, signed boundary distance per fresh member (positive is outside), `outside_players`, `nearest_inside_margin` |
+| `ring` | `known`, `phase` (`closing`, `waiting`, `not_revealed`, `closing_target_unknown`), `label`, `ring_number`, `rings_closed`, `stage_raw` with `stage_raw_meaning`, `closing_remaining_s`; when known: `radius`, signed boundary distance per fresh member (positive is outside), `outside_players`, `nearest_inside_margin` |
+
+**Ring numbering (contract version 2).** The replay's ring `stage` is a 0-based entry index (0–5 in game 123633). The two ring readers name a *waiting* ring differently, though they draw the same circle:
+
+- the map's `map_config.current_ring` reports the next entry to close;
+- this panel's `ring_features.ring_at` reports the last entry that closed.
+
+`ring_label.py` turns both into one label: **ring N is the N-th closure**, so the raw index is N − 1. While closing, the label reads "Ring 4 closing". While waiting, it reads "Ring 3 closed · ring 4 next". The map status line, this panel and both AI packets show only that label. The raw index stays in `stage_raw`, with its meaning, and neither reader was changed. Model features do not use either reader.
 
 **Which players count.** Only standing players (`alive` or `downed`) with a position updated within 5 s are used. Eliminated and dead players' last positions are listed under `quality` and never used. Environmental damage (attacker "World", teamId 0, no position) is not an attacking squad. It is split into ring damage (weapon "The Ring", 圓圈 or 安全区) and other environment (burn, wildlife).
 
@@ -55,11 +62,11 @@ Fire totals were cross-checked against a direct sum of the raw feed's damage eve
 - 439 damage in 10 s, all from opponents: Gaymers 245 (11 hits, from the W) and пыхтение гепарда 194 (7 hits, from the NE).
 - One squad within 3,000 u (Gaymers, 644 u), five more within 8,000 u, spread over 4 sectors.
 - One member is downed.
-- Ring stage 3 is closing (38 s left); both members are about 1,120 u inside.
+- Ring 4 is closing (raw stage 3; 38 s left); both members are about 1,120 u inside.
 - Height vs 5 nearby squads: higher than 1, lower than 3.
 
 **2. 09:44 (t 653), team 15: caught outside a closing ring.**
-- Both members are outside ring stage 1 (+1,177 u and +137 u), with 26 s of closing left.
+- Both members are outside ring 2 as it closes (raw stage 1; +1,177 u and +137 u), with 26 s of closing left.
 - 72 damage in 10 s: 40 from Meaningless (south, last hit 9 s ago) and 32 from the ring.
 - One squad within 3,000 u (Meaningless, 1,426 u to the S).
 - 13 opposing standing players had stale positions and were excluded.

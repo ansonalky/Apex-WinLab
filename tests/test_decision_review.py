@@ -98,7 +98,7 @@ class ValidateDecision(unittest.TestCase):
     def test_rejects_unhedged_cover_or_route(self):
         r = good_review()
         r["options"][0]["cost"] = "The building to the east gives cover."
-        self.assert_rejects(r, "asserts cover")
+        self.assert_rejects(r, "states that buildings / cover exists")
 
     def test_rejects_invented_numbers_and_too_many_options(self):
         r = good_review()
@@ -157,7 +157,7 @@ class VerifyDecisionPacket(unittest.TestCase):
             c = Coach(Path(tmp), call=fake, env=env)
             self.assertEqual(c.analyze(tiny_packet(), DECISION)["status"], "rejected")
             ok = c.analyze(tiny_packet(), DECISION)
-            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v1"))
+            self.assertEqual((ok["status"], ok["prompt_version"]), ("ok", "decision-v2"))
             self.assertTrue(c.analyze(tiny_packet(), DECISION)["cached"])
         self.assertIn("retrospective", seen[0]["system"])
         self.assertIn("REF-MATE-1", json.dumps(seen[0]["schema"]))

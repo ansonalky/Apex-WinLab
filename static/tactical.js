@@ -19,16 +19,15 @@ window.Tactical = (() => {
   function ringPart(ring) {
     if (!ring.known) {
       const phase = { not_revealed: "no ring stage revealed yet", closing_target_unknown: "closing, end not recorded" }[ring.phase] || ring.phase || "unknown";
-      return `<p><strong>Ring:</strong> ${esc(phase)}${ring.stage != null ? ` (stage ${ring.stage})` : ""}. Boundary distance not measured: ${esc(ring.reason || "geometry not revealed")}.</p>`;
+      return `<p><strong>Ring:</strong> ${esc(phase)}${ring.label ? ` (${esc(ring.label)})` : ""}. Boundary distance not measured: ${esc(ring.reason || "geometry not revealed")}.</p>`;
     }
-    const phase = ring.phase === "closing" ? `closing, ${ring.closing_remaining_s}s left` : "between closings";
     if (ring.players_measured == null) {
-      return `<p><strong>Ring:</strong> stage ${ring.stage}, ${phase}. No fresh member position to measure.</p>`;
+      return `<p><strong>Ring:</strong> ${esc(ring.label)}${ring.phase === "closing" ? `, ${ring.closing_remaining_s}s left` : ""}. No fresh member position to measure.</p>`;
     }
     const margin = ring.outside_players
       ? `<span class="unavailable">${ring.outside_players} of ${ring.players_measured} outside</span>`
       : `all ${ring.players_measured} inside; nearest member ${units(ring.nearest_inside_margin)} from the edge`;
-    return `<p><strong>Ring:</strong> stage ${ring.stage}, ${phase}, radius ${units(ring.radius)}. ${margin}. Boundary distance per member: ${ring.boundary_distance.map(signed).join(", ")} (positive is outside).</p>`;
+    return `<p><strong>Ring:</strong> ${esc(ring.label)}${ring.phase === "closing" ? `, ${ring.closing_remaining_s}s left` : ""}, radius ${units(ring.radius)}. ${margin}. Boundary distance per member: ${ring.boundary_distance.map(signed).join(", ")} (positive is outside).</p>`;
   }
 
   function firePart(fire, squads) {

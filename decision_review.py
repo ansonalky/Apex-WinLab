@@ -30,12 +30,13 @@ import re
 from typing import Any
 
 import coach
-from coach import ReviewSpec, _clock, build_packet, check_texts, verify_packet
+from coach import RING_RULE, TERRAIN_RULE, ReviewSpec, _clock, build_packet, check_texts, terrain_claims, verify_packet
 from live_predictions import FINAL, HELD_OUT
+from ring_label import LAST_CLOSED, ring_label
 from tactical import _centroid, _usable, bearing
 from turning_points import canonical_squad
 
-DECISION_PROMPT_VERSION = "decision-v1"
+DECISION_PROMPT_VERSION = "decision-v2"
 LEAD_S = 10
 MOVE_OFFSETS_S = (30, 60)
 OPTIONS = ("hold", "regroup", "disengage", "rotate_to_verified_position")
@@ -146,7 +147,8 @@ def _pre_items(game: dict, t: int, team: str, start: int, names: dict) -> list[d
         if ring.get("known") and ring.get("center") is not None:
             cx, cy = ring["center"]
             add("REF-RING", "reference", "Reference: revealed ring centre", t, {
-                "position": _xy((cx, cy)), "radius": round(ring["radius"]), "stage": ring.get("stage"),
+                "position": _xy((cx, cy)), "radius": round(ring["radius"]),
+                **{k: v for k, v in ring_label(ring.get("phase"), ring.get("stage"), LAST_CLOSED).items() if k != "stage_raw_meaning"},
                 "phase": ring.get("phase"), "from_squad_centre": _rel(center, cx, cy), "verified_coordinates": True,
                 "note": "Centre of the ring revealed by this second. Not a verified safe position or route.",
             })
@@ -364,8 +366,9 @@ Tasks:
 5. practice_takeaway: one concrete thing to review or practise.
 
 Feasibility rules:
-- Do not invent cover, line of sight, buildings, terrain or safe routes. Distance and
-  direction do not establish any of them.
+{TERRAIN_RULE}
+  Distance and direction do not establish any of them.
+{RING_RULE}
 - A teammate's position (REF-MATE-*) is a regroup reference; the route there is not known
   to be safe or traversable. rotate_to_verified_position needs a destination_ref with known
   coordinates (a REF-* item); otherwise do not offer it.
@@ -435,8 +438,6 @@ def decision_schema(packet: dict) -> dict:
     }
 
 
-_HEDGE = re.compile(r"\b(if|whether|unknown|unverified|without|lacks?|absent|not|no|cannot|can't|may|might|could|verify|check|unclear|does not|doesn't)\b", re.I)
-_FEATURE = re.compile(r"\b(cover|line of sight|sightlines?|buildings?|safe (route|path|rotation)|covered route)\b", re.I)
 _ALT_PROB = re.compile(r"%|\b(win(ning)? (probability|chance)|chance of winning|probability of winning)\b", re.I)
 
 
@@ -521,15 +522,19 @@ def validate_decision(analysis: Any, packet: dict) -> list[str]:
         texts += [o.get("expected_benefit") or "", o.get("cost") or "", o.get("uncertainty") or "",
                   (o.get("observer_only") or {}).get("explanation") or ""]
         texts += [e.get("fact") or "" for e in o.get("evidence") or []]
-    claims = list(texts)
     texts += list(analysis.get("missing_information") or [])
     check_texts(texts, packet, every, problems)
-    # Asserting terrain features: allowed only when hedged or conditional in the same sentence.
-    # Missing information may name them freely; it lists what is unknown.
+    # The situation review's terrain standard (coach.terrain_claims). Uncertainty, missing
+    # information and the recommendation's condition state what is unknown or assumed.
+    claims = [attribution.get("explanation") or "", analysis.get("practice_takeaway") or ""]
+    for w in weaknesses:
+        claims += [w.get("name") or "", w.get("interpretation") or ""] + [o.get("fact") or "" for o in w.get("observed") or []]
+    for o in options:
+        claims += [o.get("expected_benefit") or "", o.get("cost") or "", (o.get("observer_only") or {}).get("explanation") or ""]
+        claims += [e.get("fact") or "" for e in o.get("evidence") or []]
     for text in claims:
-        for sentence in re.split(r"(?<=[.!?])\s+", text):
-            if _FEATURE.search(sentence) and not _HEDGE.search(sentence):
-                problems.append(f"asserts cover, sightlines, buildings or a safe route without evidence: \"{sentence[:120]}\"")
+        problems += terrain_claims(text)
+    problems += terrain_claims(rec.get("rationale") or "", conditional=bool((rec.get("condition") or "").strip()))
     return problems
 
 

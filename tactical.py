@@ -32,9 +32,10 @@ from dashboard_data import _raw_path, _record
 from features import STANDING
 from overstat_patch import apply_frame, export_players, frame_entries, initial_state
 from ring_features import live_entries, ring_at
+from ring_label import LAST_CLOSED, ring_label
 from turning_points import recorded_events
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 # A coordinate updated more than this many seconds ago is stale.
 FRESH_GAP_S = 5
 # Opposing squads are compared within these centroid distances (replay units).
@@ -320,7 +321,9 @@ def measure(game: dict, t: int, team: Any) -> dict:
     }
 
     ring = second["ring"]
-    ring_out = {"known": bool(ring.get("known")), "phase": ring.get("phase"), "stage": ring.get("stage"),
+    # One user-facing ring label (ring N = N-th closure); the raw 0-based index is kept beside it.
+    ring_out = {"known": bool(ring.get("known")), "phase": ring.get("phase"),
+                **ring_label(ring.get("phase"), ring.get("stage"), LAST_CLOSED),
                 "closing_remaining_s": ring.get("closing_remaining_s"), "reason": ring.get("reason")}
     if ring.get("known") and usable:
         cx, cy = ring["center"]

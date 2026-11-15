@@ -47,7 +47,7 @@ from live_predictions import FINAL, HELD_OUT
 from tactical import LIMITS as TACTICAL_LIMITS
 from tactical import bearing, measure
 
-PROMPT_VERSION = "coach-v1"
+PROMPT_VERSION = "coach-v2"
 PACKET_VERSION = 1
 WINDOW_S = 60
 CHANGE_OFFSETS_S = (30, 60)
@@ -87,6 +87,13 @@ REVIEW_PRIORITIES = [
     "squad formation and condition",
 ]
 
+TERRAIN_RULE = """- Cover, sightlines, line of sight, buildings, high-ground control and safe or clear routes are never
+  in the packet. You may ask about them, make a suggestion conditional on them ("If a covered route to
+  the teammate exists, consider ..."), or say they are unknown. Never state that one exists or holds
+  (for example "the squad has cover" or "the route is safe")."""
+RING_RULE = """- Name rings only by their "label" or "ring_number" (ring N is the N-th ring to close). "stage_raw"
+  is an internal 0-based index; never quote it as a ring or stage number."""
+
 SYSTEM_PROMPT = f"""You are a tactical review coach for Apex Legends esports replays.
 You receive an evidence packet for one squad at one replay second. Write a short,
 evidence-linked review that a coach could check against the replay.
@@ -104,6 +111,8 @@ Grounding rules:
   says what they might mean tactically.
 - A higher z is a height difference. It does not prove usable high-ground control.
 - Distance and direction do not prove line of sight, cover or a safe route.
+{TERRAIN_RULE}
+{RING_RULE}
 - Recent damage is evidence of recent fire, not proof of current exposure.
 - Do not invent opponents, terrain, geometry, intentions, loadouts or counterfactual numbers.
 - Every number you write must appear in the packet (you may round it). Do not compute new
@@ -170,7 +179,9 @@ def _snapshot(game: dict, live, game_id: int, t: int, team: str) -> dict:
         "medium_squads": m["pressure"]["medium_squads"],
         "damage_taken_last_10s": m["fire"]["damage_taken"],
         "squad_z": m["elevation"]["squad_z"],
-        "ring_stage": ring.get("stage"),
+        "ring_label": ring.get("label"),
+        "ring_number": ring.get("ring_number"),
+        "ring_stage_raw": ring.get("stage_raw"),
         "ring_phase": ring.get("phase"),
         "members_outside_ring": ring.get("outside_players"),
         "heldout_probability": _round(row["model"]) if row else None,
@@ -592,6 +603,62 @@ def check_texts(texts: list[str], packet: dict, ids: set, problems: list[str]) -
                 problems.append(f"{why}: \"{text[:120]}\"")
 
 
+# ---------------------------------------------------------------- terrain grounding
+
+# Features no packet measures: there is no terrain, cover or line-of-sight data.
+_TERRAIN = [
+    ("cover", re.compile(r"\b(?:hard |soft |natural )?cover(?:ed)?\b", re.I)),
+    ("sightlines", re.compile(r"\b(?:sight ?lines?|lines? of sight|line-of-sight)\b", re.I)),
+    ("sightlines", re.compile(r"\bLOS\b")),
+    ("buildings", re.compile(r"\b(?:buildings?|rooftops?)\b", re.I)),
+    ("high-ground control", re.compile(r"\bhigh[- ]ground\b", re.I)),
+    ("a safe route", re.compile(
+        r"\b(?:safe|clear|protected|covered)\s+(?:route|path|rotation|lane)s?\b"
+        r"|\b(?:route|path|rotation|lane)s?\b[^,;.]{0,40}?\b(?:is|are|was|were|remains?|looks?)\s+"
+        r"(?:safe|clear|open|protected|traversable)\b", re.I)),
+]
+# A condition scopes over its own clause and the clauses after it in the sentence.
+_CONDITION = re.compile(r"\b(?:if|whether|unless|assuming|provided|in case)\b", re.I)
+# Within one clause: the feature is unknown, absent, denied, possible, or to be checked.
+_EPISTEMIC = re.compile(
+    r"\b(?:unknown|unclear|uncertain|unverified|not verified|not known|unconfirmed|cannot|can't|no|not|never|"
+    r"without|lacks?|lacking|absence|absent|doesn't|does not|do not|don't|verify|check|confirm|assess|review|"
+    r"inspect|look for|any available|if any|potential|potentially|possible|possibly|may be|might be|may exist|"
+    r"might exist|could be)\b", re.I)
+_CLAUSE = re.compile(r"[,;:()\u2014\u2013]|\s-\s|\b(?:but|while|although|though|whereas|so)\b", re.I)
+
+
+def terrain_claims(text: str, conditional: bool = False) -> list[str]:
+    """Sentences that state, without a condition or hedge, that cover, sightlines,
+    buildings, high-ground control or a safe route exists.
+
+    Allowed: questions; mentions inside or after a condition ("If a covered
+    route exists, consider ..."); mentions in a clause that marks them unknown,
+    absent, denied or to be checked. ``conditional`` marks text that is the
+    consequent of a separate condition field, such as a recommendation.
+    """
+    found = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
+        if not sentence.strip() or sentence.rstrip().endswith("?"):
+            continue
+        under_condition = conditional
+        for clause in _CLAUSE.split(sentence):
+            if clause is None:
+                continue
+            if _CONDITION.search(clause):
+                under_condition = True
+            if under_condition or _EPISTEMIC.search(clause):
+                continue
+            features = sorted({name for name, pattern in _TERRAIN if pattern.search(clause)})
+            if features:
+                found.append(f"states that {' / '.join(features)} exists without evidence (no terrain data): \"{sentence.strip()[:160]}\"")
+                break
+    return found
+
+
+
+
+
 def validate_analysis(analysis: Any, packet: dict) -> list[str]:
     """Reasons to reject a model response. Empty means it may be shown."""
     if not isinstance(analysis, dict):
@@ -631,6 +698,16 @@ def validate_analysis(analysis: Any, packet: dict) -> list[str]:
             problems.append(f"recommendation {i} is not conditional")
 
     check_texts(_texts(analysis), packet, ids, problems)
+    # Same terrain standard as the decision review. Uncertainty, missing information and a
+    # recommendation's condition state what is unknown or assumed, so they are not claims.
+    claims = [analysis.get("situation_summary") or ""]
+    for factor in factors:
+        claims += [factor.get("name") or "", factor.get("interpretation") or ""]
+        claims += [o.get("fact") or "" for o in factor.get("observed") or []]
+    for text in claims:
+        problems += terrain_claims(text)
+    for rec in recs:
+        problems += terrain_claims(rec.get("text") or "", conditional=bool((rec.get("condition") or "").strip()))
     return problems
 
 
