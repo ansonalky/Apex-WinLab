@@ -455,17 +455,18 @@ function ringText(ring) {
 // Screen direction of a player's recorded yaw, or null for a plain dot.
 // Yaw is angles.y: degrees, 0 along replay +x, counter-clockwise (verified on
 // three replays; see docs/map-rendering.md). The direction goes through the same
-// project() as the marker, so map flips, zoom and pan are applied to it. A
-// facing written more than frame.facing.fresh_s seconds ago is stale and shows
-// a dot; so does an eliminated player. Alive and downed players can show an
-// arrow. The arrow is recorded yaw, not verified visibility. No viewing cone
-// is drawn: that would need a field of view and map geometry, which this
-// data does not have. Facing is never inferred from movement.
+// project() as the marker, so map flips, zoom and pan are applied to it. The
+// server sends only a yaw the stream has confirmed and that no discontinuity
+// has invalidated; it is held between writes because the replay writes yaw
+// only when it changes. A player without one, or an eliminated player, shows
+// a dot. Alive and downed players can show an arrow. The arrow is recorded
+// yaw, not verified visibility. No viewing cone is drawn: that would need a
+// field of view and map geometry, which this data does not have. Facing is
+// never inferred from movement.
 function facingDirection(frame, player, project, px, py) {
   const facing = frame.facing && frame.facing.players && frame.facing.players[player.id];
-  const fresh = frame.facing && frame.facing.fresh_s;
-  if (!facing || typeof facing.yaw !== "number" || typeof facing.age_s !== "number" || typeof fresh !== "number") return null;
-  if (facing.age_s > fresh || (player.status !== "alive" && player.status !== "downed")) return null;
+  if (!facing || typeof facing.yaw !== "number") return null;
+  if (player.status !== "alive" && player.status !== "downed") return null;
   const radians = (facing.yaw * Math.PI) / 180;
   const [qx, qy] = project(player.x + Math.cos(radians) * 1000, player.y + Math.sin(radians) * 1000);
   const dx = qx - px;

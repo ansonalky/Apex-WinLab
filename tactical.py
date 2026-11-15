@@ -71,18 +71,65 @@ def bearing(dx: float, dy: float) -> tuple[float, str]:
     return round(degrees, 1), SECTORS[int(((degrees + 22.5) % 360) // 45)]
 
 
-# A recorded yaw written more than this many seconds ago is stale (same rule as positions).
-FACING_FRESH_S = FRESH_GAP_S
+class FacingTrack:
+    """Which players' held yaw the stream has confirmed, updated once per frame.
+
+    The replay is a jsondiffpatch stream: a yaw is written only when it
+    changes, and a modify delta carries ``[old, new]``. Across all 100 local
+    replays every modify after a player's first one had ``old`` equal to the
+    held value, including across seconds with no delta and across deaths
+    (docs/map-rendering.md), so a held yaw stays current with no time limit.
+    The exceptions are discontinuities, after which the yaw is unknown until
+    the next modify write:
+
+    - the player, its ``angles`` object or ``angles.y`` is added, replaced or
+      removed. A yaw that arrived inside an added object is a snapshot, and
+      28% of those snapshots disagreed with the first real write;
+    - the player returns to alive or downed from any other status (a respawn);
+    - the patch fails, or the ``players`` object itself is replaced.
+    """
+
+    def __init__(self):
+        self.confirmed: set[str] = set()
+
+    @staticmethod
+    def standing(state: dict) -> set[str]:
+        players = state.get("players")
+        if not isinstance(players, dict):
+            return set()
+        return {pid for pid, p in players.items() if isinstance(p, dict) and p.get("status") in STANDING}
+
+    def update(self, delta: Any, error: str | None, standing_before: set[str], state: dict) -> None:
+        if error or (delta is not None and not isinstance(delta, dict)):
+            self.confirmed.clear()
+            return
+        written = set()
+        players_delta = delta.get("players") if isinstance(delta, dict) else None
+        if isinstance(players_delta, list):
+            self.confirmed.clear()
+        elif isinstance(players_delta, dict):
+            for pid, pd in players_delta.items():
+                if pid == "_t":
+                    continue
+                angles = pd.get("angles") if isinstance(pd, dict) else None
+                yaw = angles.get("y") if isinstance(angles, dict) else None
+                if isinstance(yaw, list) and len(yaw) == 2:
+                    written.add(pid)
+                elif not isinstance(pd, dict) or (angles is not None and not isinstance(angles, dict)) or yaw is not None:
+                    self.confirmed.discard(pid)
+        players = state.get("players") if isinstance(state.get("players"), dict) else {}
+        respawned = self.standing(state) - standing_before - written
+        self.confirmed = ((self.confirmed | written) & set(players)) - respawned
 
 
-def _facing(state: dict, observed: dict, t: int) -> dict:
-    """Recorded facing per player hash: ``angles.y``.
+def _facing(state: dict, observed: dict, t: int, confirmed: set[str]) -> dict:
+    """Held facing per player hash: ``angles.y``, for players in ``confirmed``.
 
     Verified on three replays (docs/map-rendering.md): degrees in [-180, 180],
     0 along replay +x, increasing counter-clockwise. ``angles.x`` and ``angles.z``
-    are almost always 0 and are not used. The producer writes a value only when it
-    changes, so ``age_s`` is the time since the last write; an unchanged facing
-    and missing data cannot be told apart, and an old value counts as stale.
+    are almost always 0 and are not used. ``age_s`` is the time since the last
+    write; an unchanged yaw is not rewritten, so age alone does not make it stale
+    (see ``FacingTrack``).
     """
     players = state.get("players")
     if not isinstance(players, dict):
@@ -91,7 +138,7 @@ def _facing(state: dict, observed: dict, t: int) -> dict:
     player_obs = player_obs if isinstance(player_obs, dict) else {}
     out = {}
     for player_id, player in players.items():
-        if not isinstance(player, dict):
+        if not isinstance(player, dict) or player_id not in confirmed:
             continue
         obs = player_obs.get(player_id)
         leaf = _leaf(player, obs if isinstance(obs, dict) else {}, t, "angles", "y")
@@ -176,11 +223,14 @@ class TacticalIndex:
         seconds: dict[int, dict] = {}
         damage: list[dict] = []
         start = None
+        facing = FacingTrack()
         for frame in frame_entries(series):
             t = frame["t"]
             events = frame.get("f") or []
             events = events if isinstance(events, list) else []
-            state, observed, _error = apply_frame(state, frame.get("d"), events, observed, t)
+            standing_before = FacingTrack.standing(state)
+            state, observed, error = apply_frame(state, frame.get("d"), events, observed, t)
+            facing.update(frame.get("d"), error, standing_before, state)
             for event in events:
                 hit = _damage(t, event)
                 if hit is not None:
@@ -193,7 +243,7 @@ class TacticalIndex:
                 "players": [_player(row) for row in export_players(state, observed, t)],
                 "ring": ring_at(live_entries(state, observed), t),
                 "phase": state.get("state"),
-                "facing": _facing(state, observed, t),
+                "facing": _facing(state, observed, t, facing.confirmed),
             }
         # Feed events on the frame's replay clock, for the coach's recent-events window.
         return {"playing_start": start, "seconds": seconds, "damage": damage, "events": recorded_events(series)}
@@ -211,10 +261,10 @@ class TacticalIndex:
         return built
 
     def facing_at(self, game_id: int, t: int) -> dict:
-        """Recorded facing at exactly second ``t`` (no carrying from another second)."""
+        """Held facing at exactly second ``t``, as decoded causally up to ``t``."""
         game = self.game(game_id)
         second = game["seconds"].get(t) if game else None
-        return {"fresh_s": FACING_FRESH_S, "players": (second or {}).get("facing") or {}}
+        return {"players": (second or {}).get("facing") or {}}
 
     def at(self, game_id: int, t: int, team: Any) -> dict:
         game = self.game(game_id)

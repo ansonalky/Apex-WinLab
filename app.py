@@ -243,7 +243,7 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
         try:
             frame["facing"] = tactical.facing_at(game_id, frame["t"])
         except Exception:  # never let facing break a frame
-            frame["facing"] = {"fresh_s": None, "players": {}}
+            frame["facing"] = {"players": {}}
         frame["live"] = {
             "heldout": live.at(game_id, frame["t"], HELD_OUT),
             "final": live.at(game_id, frame["t"], FINAL),
