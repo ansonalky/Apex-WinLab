@@ -76,6 +76,14 @@ class TimelineTest(unittest.TestCase):
 
 
 class ApiTest(unittest.TestCase):
+    # create_app registers <data>/user-imports in a process-wide list; another test
+    # that opened the real data directory must not leak its stored imports in here.
+    def setUp(self):
+        clear_expansion_dirs()
+
+    def tearDown(self):
+        clear_expansion_dirs()
+
     def test_selector_and_frame_use_the_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
@@ -631,6 +639,9 @@ class MatchOrderTest(unittest.TestCase):
 
 
 class ExpansionCollectionTest(unittest.TestCase):
+    def setUp(self):
+        clear_expansion_dirs()
+
     def tearDown(self):
         clear_expansion_dirs()
 
