@@ -1101,10 +1101,12 @@ class Coach:
     """
 
     def __init__(self, cache_dir: Path | None = None, call: Callable[[dict, dict], tuple[dict, dict]] = call_provider,
-                 env: dict | None = None):
+                 env: dict | None = None, gate=None):
         self.cache_dir = cache_dir
         self.call = call
         self.env = env
+        # Optional limit on provider calls (remote_access.CallGate); cached results bypass it.
+        self.gate = gate
         self._memory: OrderedDict = OrderedDict()
         self._lock = threading.Lock()
 
@@ -1173,12 +1175,19 @@ class Coach:
         cached = self._cached(key)
         if cached is not None:
             return cached | {"cached": True}
+        if self.gate is not None:
+            refused = self.gate.acquire()
+            if refused is not None:
+                return base | {"status": "error"} | refused
         started = time.perf_counter()
         try:
             request = {"system": spec.system, "user": spec.user_message(packet), "schema": spec.schema(packet)}
             analysis, meta = self.call(config, request)
         except CoachError as exc:
             return base | {"status": "error", "kind": exc.kind, "error": exc.message, "retryable": exc.retryable}
+        finally:
+            if self.gate is not None:
+                self.gate.release()
         problems = spec.validate(analysis, packet)
         if problems:
             self._record_rejection(base, packet, analysis, problems, meta)

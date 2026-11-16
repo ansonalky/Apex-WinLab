@@ -147,8 +147,15 @@ def select_store(data_dir: Path, backend: str, dsn: str | None = None) -> tuple[
     }
 
 
-def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | None = None) -> Flask:
+def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | None = None,
+               remote: dict | None = None) -> Flask:
+    """``remote`` ({"login", "gate"}) turns on remote access: a login for every
+    route, a limit on paid AI calls, and no Overstat URL imports."""
     app = Flask(__name__)
+    if remote is not None:
+        from remote_access import require_login
+
+        require_login(app, remote["login"])
     if store is None:
         store, info = select_store(data_dir, backend)
     info = info or {"backend": getattr(store, "backend", "files"), "label": "", "detail": ""}
@@ -174,7 +181,7 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
     tactical = TacticalIndex(root)
     app.config["TACTICAL"] = tactical  # the map's ring uses the same causal reader
     # AI coach: runs only on request, from a packet of evidence up to the chosen second.
-    coach = Coach(root / "coach_cache")
+    coach = Coach(root / "coach_cache", gate=remote["gate"] if remote else None)
 
     def highlight_error(game_id: int, kind: str, reason: str) -> dict:
         return {
@@ -370,6 +377,9 @@ def create_app(data_dir: Path, backend: str = "files", store=None, info: dict | 
 
     @app.post("/api/open-match")
     def open_overstat():
+        if remote is not None:
+            # Imports fetch from Overstat and write files; not offered over remote access.
+            return jsonify({"status": "error", "message": "Opening Overstat URLs is turned off for remote access."}), 403
         body = request.get_json(silent=True) or {}
         game_number = body.get("game_number")
         try:
@@ -421,15 +431,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5050)
     parser.add_argument("--backend", choices=("auto", "files", "tiger"), default="auto")
+    parser.add_argument(
+        "--remote-auth",
+        type=Path,
+        help="Remote access: login file from 'remote_access.py init'. Requires the login on every route, "
+        "limits paid AI calls, turns off URL imports and serves with waitress.",
+    )
+    parser.add_argument("--remote-max-reviews", type=int, default=20, help="New AI reviews per UTC day in remote mode.")
     args = parser.parse_args(argv)
     if not args.data_dir.is_dir():
         raise SystemExit(f"--data-dir is not a directory: {args.data_dir}")
+    remote = None
+    if args.remote_auth:
+        from remote_access import CallGate, load_login
+
+        try:
+            from waitress import serve
+        except ImportError:
+            raise SystemExit("--remote-auth needs waitress (pip install -r requirements.txt)") from None
+        if not args.remote_auth.is_file():
+            raise SystemExit(f"--remote-auth: {args.remote_auth} not found (run: python remote_access.py init)")
+        usage = args.remote_auth.parent / "usage.json"
+        remote = {"login": load_login(args.remote_auth),
+                  "gate": CallGate(usage, max_concurrent=1, daily_limit=args.remote_max_reviews)}
     clear_expansion_dirs()
     for path in args.expansion_dir:
         register_expansion_dir(path)
     store, info = select_store(args.data_dir, args.backend)
     print(f"data backend: {info['label']} ({info['detail']})")
-    app = create_app(args.data_dir, store=store, info=info)
+    app = create_app(args.data_dir, store=store, info=info, remote=remote)
+    if remote is not None:
+        print(f"remote access: login required; at most {args.remote_max_reviews} new AI reviews per UTC day, "
+              f"one at a time; URL imports off. Serving with waitress on {args.host}:{args.port}", flush=True)
+        serve(app, host=args.host, port=args.port, threads=8)
+        return 0
     app.run(host=args.host, port=args.port, debug=False)
     return 0
 
