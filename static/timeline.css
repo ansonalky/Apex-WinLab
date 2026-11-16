@@ -1,26 +1,35 @@
-/* Timeline styles are isolated from shared dashboard and shield styling. */
-.event-timeline { position: relative; margin: 0.8rem 0.5rem 0; }
+/* Compact replay scrubber. Geometry and interaction logic stay in timeline.js. */
+.event-timeline { position: relative; box-sizing: border-box; margin: 0.6rem 0 0; padding: 8px 14px 6px; background: #171e29; border-radius: 8px; }
 .event-timeline[hidden], .event-timeline [hidden] { display: none !important; }
-.event-timeline .timeline-track { position: relative; height: 22px; background: transparent; border-radius: 0; overflow: visible; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
-.timeline-track::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 3px; background: #3975b5; border-radius: 2px; }
-.event-timeline .timeline-mark { position: absolute; display: flex; justify-content: center; align-items: center; gap: 1px; top: 0; height: 24px; min-width: 12px; width: auto; padding: 0 3px; margin: 0; transform: translateX(-50%); border: 0; border-radius: 2px; background: transparent; cursor: pointer; }
-.timeline-tick { display: block; flex: 0 0 2px; width: 2px; height: 10px; background: #a0cbe8; }
-.timeline-tick.kill { height: 9px; background: #3dd68c; }
-.timeline-tick.knock { height: 8px; background: #7fd3ea; }
-.timeline-tick.death { background: #e85d4c; }
-.timeline-tick.squad_elimination { background: #e85d4c; outline: 1px solid white; }
-.timeline-tick.ring-close { height: 12px; background: #f0c14a; }
-.timeline-tick.ring-start { width: 4px; flex-basis: 4px; background: #161a20; border: 1px solid #f0c14a; box-sizing: border-box; }
-.event-timeline .timeline-playhead { position: absolute; top: 1px; bottom: auto; width: 0; height: 0; margin: 0; transform: translateX(-50%); border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid white; background: transparent; pointer-events: auto; cursor: ew-resize; }
-.timeline-mark:focus-visible, .timeline-playhead:focus-visible { outline: 2px solid white; outline-offset: 3px; }
-.timeline-endpoints { display: flex; justify-content: space-between; color: #b7beca; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
-.event-timeline .timeline-tip { position: absolute; bottom: 100%; z-index: 12; box-sizing: border-box; width: max-content; max-width: min(26rem, 100%); max-height: 16rem; overflow: auto; margin: 0; min-height: 0; padding: 0.5rem; background: #121418; border: 1px solid #4e79a7; border-radius: 6px; box-shadow: 0 4px 16px #0008; font-size: 0.8rem; line-height: 1.45; }
-.timeline-tip strong { display: block; margin-bottom: 0.3rem; }
-.timeline-tip button { display: block; width: 100%; padding: 0.35rem; background: transparent; border: 0; color: #e7e9ee; font: inherit; text-align: left; cursor: pointer; }
-.timeline-tip button:hover, .timeline-tip button:focus-visible { background: #26374c; outline: 1px solid #a0cbe8; }
-.timeline-key { margin-top: 0.15rem; color: #b7beca; font-size: 0.72rem; }
-.timeline-key p { max-width: 65rem; }
-
-/* Keep the active cluster visible when its details cover part of the map. */
-.timeline-mark:hover .timeline-tick, .timeline-mark[aria-expanded="true"] .timeline-tick { filter: brightness(1.25); box-shadow: 0 0 4px #c5def055; }
-.timeline-tip button + button { border-top: 1px solid #26303d; }
+.event-timeline .timeline-track { --progress: 0%; position: relative; height: 54px; background: transparent; border-radius: 0; overflow: visible; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
+.timeline-track::before, .timeline-track::after { content: ""; position: absolute; left: 0; top: 25px; height: 6px; border-radius: 3px; pointer-events: none; }
+.timeline-track::before { right: 0; background: #2b405d; }
+.timeline-track::after { width: var(--progress); background: #67adf0; }
+.timeline-now { position: absolute; top: 0; transform: translateX(-50%); color: #f3f6fb; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 14px; pointer-events: none; }
+.event-timeline .timeline-mark { position: absolute; z-index: 1; display: flex; justify-content: center; align-items: flex-end; gap: 2px; top: 8px; height: 44px; min-width: 14px; width: auto; padding: 0 3px; margin: 0; transform: translateX(-50%); border: 0; border-radius: 3px; background: transparent; cursor: pointer; box-sizing: border-box; }
+.timeline-tick { display: block; flex: 0 0 3px; width: 3px; height: 13px; border-radius: 1px; background: #a0cbe8; }
+.timeline-tick.kill { background: #49d998; }
+.timeline-tick.knock { height: 11px; background: #8ad6ee; }
+.timeline-tick.death { background: #f17b69; }
+.timeline-tick.squad_elimination { background: #e85d4c; outline: 1px solid #fff; }
+.timeline-tick.ring-close { height: 15px; background: #f0c966; }
+.timeline-tick.ring-start { width: 5px; flex-basis: 5px; background: #171e29; border: 1px solid #f0c966; box-sizing: border-box; }
+.event-timeline .timeline-playhead { position: absolute; z-index: 2; top: 2px; bottom: auto; width: 44px; height: 44px; margin: 0; transform: translateX(-50%); border: 0; background: transparent; pointer-events: auto; cursor: ew-resize; }
+.timeline-playhead::before { content: ""; position: absolute; left: 16px; top: 15px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #fff; }
+.timeline-mark:focus-visible, .timeline-playhead:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
+.timeline-mark:hover .timeline-tick, .timeline-mark[aria-expanded="true"] .timeline-tick { filter: brightness(1.15); }
+.timeline-endpoints { display: flex; justify-content: space-between; margin-top: 2px; color: #bdc8d8; font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums; }
+.timeline-tools { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 24px; color: #bdc8d8; font-size: 11px; }
+.timeline-tools .timeline-filter { display: inline-flex; flex-direction: row; align-items: center; gap: 5px; font-size: inherit; cursor: pointer; }
+.timeline-filter input { margin: 0; accent-color: #67adf0; }
+.event-timeline .timeline-key { position: static; margin: 0; font-size: inherit; }
+.timeline-key summary { cursor: pointer; }
+.timeline-key p { position: absolute; right: 8px; bottom: 26px; z-index: 10; box-sizing: border-box; width: min(28rem, calc(100% - 16px)); padding: 10px; margin: 0; background: #111925; border-radius: 6px; color: #d3deec; line-height: 1.5; }
+.event-timeline .timeline-tip { position: absolute; bottom: 100%; z-index: 12; box-sizing: border-box; width: max-content; max-width: min(23rem, 100%); max-height: 16rem; overflow: auto; margin: 0; min-height: 0; padding: 4px; background: #111925; border: 1px solid #41516a; border-radius: 6px; box-shadow: 0 4px 14px #0006; color: #eef3fa; font-size: 12px; line-height: 1.4; }
+.timeline-tip strong { display: block; padding: 4px 6px; color: #bdc8d8; font-size: 11px; font-weight: 500; }
+.timeline-tip button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 44px; box-sizing: border-box; padding: 6px; background: transparent; border: 0; border-radius: 3px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.timeline-tip time { color: #a7d2fa; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.timeline-tip button span { overflow-wrap: anywhere; }
+.timeline-tip button + button { border-top: 1px solid #263345; }
+.timeline-tip button:hover, .timeline-tip button:focus-visible { background: #263b54; outline: 1px solid #a0cbe8; }
+@media (max-width: 480px) { .event-timeline { padding-inline: 12px; } .timeline-tools { gap: 10px; } }

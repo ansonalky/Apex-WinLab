@@ -28,6 +28,7 @@ let evaluation = null;
 let backendInfo = null;
 let mapConfig = null;
 let currentRing = null;
+let selectedPlayerId = null;
 let requestToken = 0;
 let activeLoad = null;
 // At most one frame request runs at a time. Slider input that arrives while
@@ -204,12 +205,12 @@ function renderIdentity() {
   const preview = isPreview(summary);
   const badge = predictionBadge(primaryKind());
   const status = preview
-    ? `<span class="badge preview">Temporary preview</span>${helpHtml("tip-status", "About temporary preview", previewCopy(summary))}`
-    : `<span class="badge saved">Saved</span>`;
-  const prediction = badge
-    ? `<span class="badge ${badge.className}">${esc(badge.text)}</span>${helpHtml("tip-prediction", "About this prediction", predictionCopy(primaryKind()))}`
+    ? `<span class="identity-status"><span class="badge preview">Temporary preview</span>${helpHtml("tip-status", "About temporary preview", previewCopy(summary))}</span>`
     : "";
-  meta.innerHTML = `<span class="identity-event">${textOrUnknown(summary.event)}</span><span class="identity-map">${esc(readableMap(summary.map_name))}</span><span class="identity-status">${status}</span><span class="identity-pred">${prediction}</span>`;
+  const prediction = badge && badge.text !== "Held-out"
+    ? `<span class="identity-pred"><span class="badge ${badge.className}">${esc(badge.text)}</span>${helpHtml("tip-prediction", "About this prediction", predictionCopy(primaryKind()))}</span>`
+    : "";
+  meta.innerHTML = `<span class="identity-event">${textOrUnknown(summary.event)}</span><span class="identity-map">${esc(readableMap(summary.map_name))}</span>${status}${prediction}`;
 }
 
 function syncUnlistedOption() {
@@ -379,6 +380,7 @@ async function loadMatch(gameId, options = {}) {
 
 async function loadMatchBody(gameId) {
   if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
+  selectedPlayerId = null;
   if (window.EventTimeline) window.EventTimeline.reset();
   if (window.ObserverRing) window.ObserverRing.reset();
   const token = ++requestToken;
@@ -590,6 +592,8 @@ function draw() {
     ctx,
     frame,
     selectedTeam: selectedTeam(),
+    selectedPlayerId,
+    gameId: summary.game_id,
     colorFor,
     squadName,
     ring: window.ObserverRing ? window.ObserverRing.view({
@@ -631,7 +635,8 @@ function renderRoster() {
     const status = !playerOut && zeroed
       ? `${textOrUnknown(player.status)} · squad out ${mmss(squadOut - replayStart())}`
       : textOrUnknown(player.status);
-    return `<div class="player-row${zeroed ? " out" : ""}">
+    const selected = player.id != null && String(player.id) === selectedPlayerId;
+    return `<div class="player-row${zeroed ? " out" : ""}${selected ? " selected-player" : ""}" role="button" tabindex="${player.id == null ? -1 : 0}" data-player-id="${esc(player.id == null ? "" : String(player.id))}" aria-pressed="${selected}" aria-disabled="${player.id == null}">
       <span class="player-name" title="${esc(player.name || "")}">${textOrUnknown(player.name)}</span>
       <span class="player-status status-${esc(player.status || "unknown")}">${status}</span>
       ${meter("HP", health, player.healthMax, "hp")}
@@ -1241,6 +1246,7 @@ altHighlights.addEventListener("click", (event) => {
 function applySquadSelection(options = {}) {
   if (!options.keyMoment) cancelKeyMoment();
   if (window.Tactical && window.Tactical.reset) window.Tactical.reset();
+  if (!options.preservePlayer) selectedPlayerId = null;
   if (window.EventTimeline) window.EventTimeline.reset();
   loadHighlights();
   if (!frame) return;
@@ -1266,19 +1272,46 @@ function syncTimeline() {
 
 let selectionScroll = null;
 
-function selectSquad(teamId) {
+function selectSquad(teamId, playerId = null) {
   const id = String(teamId);
   if (![...squadSelect.options].some((option) => option.value === id)) return;
   const x = selectionScroll ? selectionScroll.x : window.scrollX;
   const y = selectionScroll ? selectionScroll.y : window.scrollY;
   selectionScroll = null;
   const changed = squadSelect.value !== id;
+  const player = playerId == null ? null : (frame && frame.players || []).find(
+    (item) => item.id != null && String(item.id) === String(playerId) && String(item.teamId) === id);
+  const nextPlayer = player ? String(player.id) : null;
+  const playerChanged = selectedPlayerId !== nextPlayer;
+  selectedPlayerId = nextPlayer;
   squadSelect.value = id;
-  if (changed) applySquadSelection();
+  if (changed) applySquadSelection({ preservePlayer: true });
+  else if (playerChanged) { draw(); renderRoster(); }
   const restore = () => window.scrollTo(x, y);
   restore();
   requestAnimationFrame(restore);
 }
+
+// Roster selection uses the same ID-based path as map markers, without seeking.
+function selectRosterPlayer(event) {
+  const row = event.target.closest("[data-player-id]");
+  if (!row || row.dataset.playerId === "" || !frame) return;
+  const player = frame.players.find((item) => item.id != null && String(item.id) === row.dataset.playerId
+    && String(item.teamId) === selectedTeam());
+  if (!player) return;
+  const keepFocus = row.contains(document.activeElement);
+  selectSquad(player.teamId, player.id);
+  if (keepFocus) {
+    const current = [...roster.querySelectorAll("[data-player-id]")].find((item) => item.dataset.playerId === String(player.id));
+    if (current) current.focus({ preventScroll: true });
+  }
+}
+roster.addEventListener("click", selectRosterPlayer);
+roster.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  selectRosterPlayer(event);
+});
 
 window.ApexMap.onSelect = selectSquad;
 window.addEventListener("map-image", () => { if (frame) draw(); });

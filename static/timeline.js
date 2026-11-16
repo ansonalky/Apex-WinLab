@@ -5,13 +5,14 @@ window.EventTimeline = (() => {
   let seekTo = () => {}, shownElapsed = 0, duration = 0, groups = [];
   let activeGroup = null, pinned = false;
   let pendingPromise = null;
+  let showKnocks = true;
   let scrub = null, suppressClick = false;
   const SLOP = 5;
   const finite = (value) => typeof value === "number" && Number.isFinite(value);
   const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[ch]));
-  const clock = (value) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+  const clock = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
   const percent = (value) => duration > 0 ? Math.max(0, Math.min(100, value * 100 / duration)) : 0;
   const inRange = (value) => finite(value) && value >= 0 && value <= duration;
 
@@ -46,8 +47,11 @@ window.EventTimeline = (() => {
     activeGroup = index;
     pinned = pin;
     root.querySelectorAll("[data-group]").forEach((button) => button.setAttribute("aria-expanded", String(Number(button.dataset.group) === index)));
-    tip.innerHTML = `<strong>${group.length > 1 ? "Choose an event" : "Event details"}</strong>` + group.map((item, i) =>
-      `<button type="button" data-event="${i}">${clock(item.elapsed)} · ${esc(item.text)}</button>`).join("");
+    tip.innerHTML = (group.length > 1 ? `<strong>Choose an event</strong>` : "") + group.map((item, i) => {
+      const description = String(item.text).replace(/^(Confirmed kill|Knock|Death) · /, "");
+      const short = description.length > 100 ? `${description.slice(0, 99)}…` : description;
+      return `<button type="button" data-event="${i}" aria-label="${esc(`${clock(item.elapsed)} · ${item.text}`)}"><time>${clock(item.elapsed)}</time><span>${esc(short)}</span></button>`;
+    }).join("");
     tip.style.left = `${Math.min(100, Math.max(0, percent(group[0].elapsed)))}%`;
     tip.style.transform = `translateX(-${Math.min(100, Math.max(0, percent(group[0].elapsed)))}%)`;
     tip.hidden = false;
@@ -95,6 +99,13 @@ window.EventTimeline = (() => {
     head.style.left = `${percent(shownElapsed)}%`;
     head.setAttribute("aria-valuenow", String(shownElapsed));
     head.setAttribute("aria-valuetext", clock(shownElapsed));
+    const track = root.querySelector("[data-track]");
+    if (track) track.style.setProperty("--progress", `${percent(shownElapsed)}%`);
+    const label = root.querySelector("[data-current-time]");
+    if (label) {
+      label.textContent = clock(shownElapsed);
+      label.style.left = `clamp(24px, ${percent(shownElapsed)}%, calc(100% - 24px))`;
+    }
   }
 
   function render() {
@@ -107,7 +118,7 @@ window.EventTimeline = (() => {
       }
     }
     for (const event of payload.markers || []) {
-      if (inRange(event.elapsed) && ["kill", "knock", "death", "squad_elimination"].includes(event.kind)) events.push(event);
+      if (inRange(event.elapsed) && (showKnocks || event.kind !== "knock") && ["kill", "knock", "death", "squad_elimination"].includes(event.kind)) events.push(event);
     }
     events.sort((a, b) => a.elapsed - b.elapsed);
     groups = [];
@@ -120,14 +131,24 @@ window.EventTimeline = (() => {
     const marks = groups.map((group, i) => `<button type="button" class="timeline-mark" data-group="${i}" style="left:${percent(group[0].elapsed)}%" aria-label="${esc(group.length > 1 ? `${group.length} events near ${clock(group[0].elapsed)}; choose an event` : `${clock(group[0].elapsed)} · ${group[0].text}`)}" aria-expanded="false" aria-controls="timeline-details">${group.map((item) => `<span class="timeline-tick ${item.kind}" aria-hidden="true"></span>`).join("")}</button>`).join("");
     root.hidden = false;
     root.innerHTML = `<div class="timeline-track" data-track role="group" aria-label="Match event timeline">
+      <span class="timeline-now" data-current-time aria-hidden="true">${clock(shownElapsed)}</span>
       ${marks}<div class="timeline-playhead" data-playhead role="slider" tabindex="0" aria-label="Replay time" aria-valuemin="0" aria-valuemax="${duration}" aria-valuenow="${shownElapsed}" aria-valuetext="${clock(shownElapsed)}"></div>
-      </div><div class="timeline-endpoints"><span>0:00</span><span>${clock(duration)}</span></div>
+      </div><div class="timeline-endpoints"><span>00:00</span><span>${clock(duration)}</span></div>
       <div class="timeline-tip" id="timeline-details" data-tip role="group" aria-label="Event details" hidden></div>
-      <details class="timeline-key"><summary>Timeline key</summary><p>Green: kill · Blue: knock · Red: death · White-edged red: squad eliminated · Solid yellow: ring closed · Hollow yellow: closing start, completion unknown. Select a tick for details; select an event to seek. Use arrow keys on the white playhead to seek by one second, Shift for ten seconds.</p></details>`;
+      <div class="timeline-tools"><label class="timeline-filter"><input type="checkbox" data-knocks ${showKnocks ? "checked" : ""}>Knocks</label>
+      <details class="timeline-key"><summary>Legend</summary><p>Green: kill · Blue: knock · Red: death · White-edged red: squad eliminated · Solid yellow: ring closed · Hollow yellow: closing start, completion unknown. Select a tick for details; select an event to seek. Use arrow keys on the white playhead to seek by one second, Shift for ten seconds.</p></details></div>`;
     movePlayhead();
   }
 
   if (root) {
+    root.addEventListener("change", (event) => {
+      const filter = event.target.closest("[data-knocks]");
+      if (!filter) return;
+      showKnocks = filter.checked;
+      dismiss();
+      render();
+      root.querySelector("[data-knocks]")?.focus({ preventScroll: true });
+    });
     root.addEventListener("pointerdown", (event) => {
       if (!event.isPrimary || scrub) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;

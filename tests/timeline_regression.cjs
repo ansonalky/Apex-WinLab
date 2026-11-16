@@ -7,13 +7,14 @@ function harness() {
   const listeners = {}, documentListeners = {}, pending = [], sought = [];
   const head = {style: {}, setAttribute(k,v) { this[k] = v; }};
   const tip = {style: {}, hidden: true, innerHTML: ''};
+  const current = {style:{},textContent:''};
   const captured = new Set();
-  const track = {getBoundingClientRect() {return {left:10,width:600};},
+  const track = {style:{setProperty(k,v){this[k]=v;}},getBoundingClientRect() {return {left:10,width:600};},
     setPointerCapture(id) {captured.add(id);}, hasPointerCapture(id) {return captured.has(id);},
     releasePointerCapture(id) {captured.delete(id);}};
   const root = {hidden: true, innerHTML: '',
     addEventListener(k, fn) { listeners[k] = fn; },
-    querySelector(s) { return s === '[data-playhead]' ? head : s === '[data-tip]' ? tip : s === '[data-track]' ? track : null; },
+    querySelector(s) { return s === '[data-playhead]' ? head : s === '[data-tip]' ? tip : s === '[data-track]' ? track : s === '[data-current-time]' ? current : null; },
     querySelectorAll() { return []; }, contains(target) { return target === this; }};
   const context = {window: {}, document: {activeElement: null,
     querySelector() {return root;}, addEventListener(k,fn) {documentListeners[k] = fn;}},
@@ -23,7 +24,7 @@ function harness() {
   const sync = (gameId=1, team=20, elapsed=10) => api.sync({gameId, team, elapsed, duration:1200, seek:t=>sought.push(t)});
   const finish = (i, markers=[], rings=[]) => pending[i].resolve({ok:true, json: async()=>({available:true, markers, rings})});
   const target = (selector, value) => ({closest(s) {return s===selector ? value : null;}});
-  return {api, sync, finish, pending, root, head, tip, track, captured, sought, listeners, documentListeners, target};
+  return {api, sync, finish, pending, root, head, tip, current, track, captured, sought, listeners, documentListeners, target};
 }
 (async () => {
   const ready=harness();
@@ -49,6 +50,8 @@ function harness() {
   await h.sync(2,21,42);
   assert.equal(h.pending.length,before,'same selection reuses payload');
   assert.equal(h.head['aria-valuenow'],'42');
+  assert.equal(h.current.textContent,'00:42');
+  assert.equal(h.track.style['--progress'],'3.5%');
   h.api.reset(); assert.equal(h.root.innerHTML,'');
   a=h.sync(); h.api.reset(); h.finish(3,[{kind:'kill',elapsed:10,text:'Late reset'}]); await a;
   assert.equal(h.root.innerHTML,'','reset also invalidates late responses');
@@ -137,6 +140,11 @@ function harness() {
   }
   assert.match(fs.readFileSync('static/timeline.css','utf8'),/touch-action: none/);
 
+  taps.listeners.change({target:taps.target('[data-knocks]',{checked:false})});
+  assert.doesNotMatch(taps.root.innerHTML,/class="timeline-tick knock"/);
+  assert.match(taps.root.innerHTML,/class="timeline-tick kill"/);
+  taps.listeners.change({target:taps.target('[data-knocks]',{checked:true})});
+  assert.match(taps.root.innerHTML,/class="timeline-tick knock"/);
   const d=fs.readFileSync('static/dashboard.js','utf8');
   const init=d.slice(d.indexOf('async function loadMatchBody('),d.indexOf('  const token',d.indexOf('async function loadMatchBody(')));
   assert.match(init,/window.EventTimeline.reset\(\)/);

@@ -270,6 +270,13 @@ dialog#model-details h3 { font-size: 0.95rem; margin: 0.5rem 0 0.3rem; }
 .timeline-legend { margin: 0.3rem 0 0; font-size: 0.75rem; color: #b7beca; }
 .timeline-tip { margin: 0.15rem 0 0; min-height: 1rem; font-size: 0.8rem; }
 
+/* Linked player selection; keep roster geometry and shield colors intact. */
+.player-row[role="button"] { cursor: pointer; border-radius: 4px; outline: 1px solid transparent; outline-offset: 2px; }
+.player-row[role="button"]:hover { background: #253044; }
+.player-row.selected-player { background: #25384b; outline-color: #a0cbe8; }
+.player-row[role="button"]:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.player-row[aria-disabled="true"] { cursor: default; }
+
 /* Map controls are anchored to the canvas, independently of replay controls. */
 .map-viewport { position: relative; }
 .map-viewport canvas { display: block; box-sizing: border-box; }
