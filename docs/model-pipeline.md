@@ -7,7 +7,7 @@
 First real run on the collection from d7196f5. The synthetic tests check mechanics only; the figures below are the only performance evidence.
 
 **Data checks:**
-- 51 accepted games across **22** sessions (HANDOFF.md says 23).
+- 51 accepted games across **22** sessions.
 - All 51 raw files match their manifest `sha256`.
 - Every `download_path` is a local relative `data/raw/...` path; none point to `/workspace`.
 - All 22 sessions have a stats cache, and each game has exactly one standings entry.

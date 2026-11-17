@@ -139,7 +139,7 @@ So the Tiger-backed demo still needs the local `data/` directory and, for the 49
 
 These figures are the frozen audit of the original 51 games (`config/frozen_evaluation.json`, `docs/model-pipeline.md`, `docs/ring-features-v2.md`). They are not a new measurement of the 100-match catalog, and they were not recomputed for this guide.
 
-- **Data:** 51 accepted games across **22** sessions, 5 maps and 11 organizers. `HANDOFF.md` says 23 sessions; the audit in `docs/model-pipeline.md` counts 22.
+- **Data:** 51 accepted games across **22** sessions, 5 maps and 11 organizers, as counted by the audit in `docs/model-pipeline.md`.
 - **Split by session:**
 
   | Split | Sessions | Games | Checkpoint groups |
