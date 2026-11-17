@@ -1,0 +1,15 @@
+{
+  "source": "https://overstat.gg/maps_2048/<map_id>.webp",
+  "replay_reference": "https://overstat.gg/js/9107.be2636c4.js",
+  "size_table": "https://overstat.gg/js/9090.a1b18f4e.js module 7170 MAP_SIZE",
+  "images": {
+    "mp_rr_desertlands_mu5": {"pixels": "2048x2048", "status": "cached"},
+    "mp_rr_district_mu1": {"pixels": "2048x2048", "status": "cached"},
+    "mp_rr_olympus_mu3": {"pixels": "2048x2048", "status": "cached"},
+    "mp_rr_tropic_island_mu2_landscape": {"pixels": "2048x2048", "status": "cached"}
+  },
+  "unsupported": {
+    "mp_rr_district_mu1_night": "Overstat /maps_2048 returned HTML, not a 2048 image. Not stretched onto the day map."
+  },
+  "attribution": "Map images are the public Overstat replay assets. Apex WinLab does not claim ownership of the artwork."
+}

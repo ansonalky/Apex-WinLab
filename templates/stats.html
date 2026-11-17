@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Performance in collected matches · Apex WinLab</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header>
+    <h1>Apex WinLab</h1>
+    <nav class="nav">
+      <a href="/">Match Explorer</a>
+      <a href="/stats" aria-current="page">Performance</a>
+    </nav>
+    <p class="lede">Performance in collected matches. These are the accepted replays in this project, not a global ranking.</p>
+  </header>
+  <section class="controls">
+    <label>Map
+      <select id="map"><option value="">All maps</option></select>
+    </label>
+    <label>Event
+      <select id="session"><option value="">All events</option></select>
+    </label>
+    <label>Squad format
+      <select id="format">
+        <option value="trios" selected>Trios</option>
+        <option value="duos">Duos</option>
+        <option value="solos">Solos</option>
+        <option value="unverified">Unverified</option>
+        <option value="all">All formats</option>
+      </select>
+    </label>
+    <label>Scoring
+      <select id="scoring">
+        <option value="compatible" selected>Compatible with placement + 1 per kill</option>
+        <option value="all">All games, rank by placement</option>
+        <option value="not_compatible">Not compatible with that scheme</option>
+      </select>
+    </label>
+    <label>Minimum games
+      <input id="min-games" type="number" min="1" value="5">
+    </label>
+  </section>
+  <div class="tabs">
+    <button type="button" id="tab-teams" class="tab on">Team stats</button>
+    <button type="button" id="tab-players" class="tab">Player stats</button>
+  </div>
+  <p id="stats-note" class="note"></p>
+  <p id="stats-status" class="meta" aria-live="polite">Loading collected results…</p>
+  <div class="layout stats-layout">
+    <div class="table-wrap">
+      <table class="stats" id="stats-table"></table>
+    </div>
+    <aside id="detail" class="panel">
+      <h2>Contributing matches</h2>
+      <p class="meta">Select a team or player.</p>
+    </aside>
+  </div>
+  <details class="method">
+    <summary>Methodology and identity</summary>
+    <p>Team totals come from each game's final standings (<code>overall_stats</code>), not from summing replay frames. One row is stored per team per game. A replay <code>teamId</code> is match-local and is never used to merge teams.</p>
+    <p>A roster is the set of Overstat <code>playerId</code>s on that team in that game. The same name with a different roster stays a separate row. A roster that was recorded under more than one name is flagged. Samples under five games are marked provisional.</p>
+    <p>Average points are shown only for games compatible with this scoring scheme: every team's recorded score equals the placement points (12, 9, 7, 5, 4, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, then 0) plus one point per kill. Matching the recorded scores does not establish the event's official rules. Kills are not added on top of that score. Other games are ranked by average placement. Squad formats stay separate unless you choose all formats, which also ranks by placement.</p>
+    <p>Player kills, damage, and assists are that player's final line. Role and survival time change them. There is no skill rating.</p>
+  </details>
+  <script src="/static/stats.js"></script>
+</body>
+</html>

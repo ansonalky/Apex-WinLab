@@ -1,0 +1,527 @@
+"""Explanatory tactical measurements for one squad at one replay second.
+
+Not a model input. The frozen models and per-second predictions do not use
+anything here, and nothing here changes a probability.
+
+Built from one causal pass over the match's local replay (the same decoder
+as the dashboard and features): at second ``t`` only state applied up to
+``t`` and feed events that arrived at or before ``t`` are used. Ring geometry
+comes from ``ring_features.ring_at`` over live (revealed) ring entries only,
+so the planned future schedule is never used.
+
+Coordinates are raw replay units. Their real-world scale is not verified
+(see docs/tactical.md); distances are reported in those units.
+
+Interpretation limits, stated with every response:
+- A higher z is a height difference, not usable high-ground control.
+- Proximity and bearing do not establish line of sight.
+- Incoming damage is observed recent fire from feed events, not current
+  visibility.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import threading
+from collections import OrderedDict
+from pathlib import Path
+from typing import Any
+
+from dashboard_data import _raw_path, _record
+from features import STANDING
+from overstat_patch import _leaf, apply_frame, export_players, frame_entries, initial_state
+from event_timeline import display_feed, markers_for_team, ring_span
+from ring_features import live_entries, ring_at
+from ring_overlay import overlay_geometry, following_destination
+from ring_label import LAST_CLOSED, ring_label
+from turning_points import recorded_events
+
+CONTRACT_VERSION = 2
+# A coordinate updated more than this many seconds ago is stale.
+FRESH_GAP_S = 5
+# Opposing squads are compared within these centroid distances (replay units).
+NEAR_UNITS = 3000
+MEDIUM_UNITS = 8000
+# Incoming fire window, in seconds up to and including t.
+FIRE_WINDOW_S = 10
+SECTORS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+# Below this centroid distance a bearing between squads is not meaningful.
+MIN_BEARING_UNITS = 500
+# Environmental damage has attacker "World", teamId 0, no position. The ring
+# appears under localized weapon names.
+RING_WEAPONS = {"The Ring", "圓圈", "安全区"}
+CACHE_GAMES = 2
+
+LIMITS = [
+    "Coordinates are raw replay units; their real-world scale is not verified.",
+    "A higher z is a height difference only. It does not establish usable high-ground control.",
+    "Distance and bearing do not establish line of sight.",
+    "Incoming fire is observed damage from feed events in the window, not current visibility.",
+    "Ring values use only ring stages revealed by this second.",
+    "Bearings are on the map image: north is up, east is right.",
+]
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def bearing(dx: float, dy: float) -> tuple[float, str]:
+    """Map bearing from a vector in replay x/y (x east, y north), degrees clockwise from north."""
+    degrees = math.degrees(math.atan2(dx, dy)) % 360
+    return round(degrees, 1), SECTORS[int(((degrees + 22.5) % 360) // 45)]
+
+
+class FacingTrack:
+    """Which players' held yaw the stream has confirmed, updated once per frame.
+
+    The replay is a jsondiffpatch stream: a yaw is written only when it
+    changes, and a modify delta carries ``[old, new]``. Across all 100 local
+    replays every modify after a player's first one had ``old`` equal to the
+    held value, including across seconds with no delta and across deaths
+    (docs/map-rendering.md), so a held yaw stays current with no time limit.
+    The exceptions are discontinuities, after which the yaw is unknown until
+    the next modify write:
+
+    - the player, its ``angles`` object or ``angles.y`` is added, replaced or
+      removed. A yaw that arrived inside an added object is a snapshot, and
+      28% of those snapshots disagreed with the first real write;
+    - the player returns to alive or downed from any other status (a respawn);
+    - the patch fails, or the ``players`` object itself is replaced.
+    """
+
+    def __init__(self):
+        self.confirmed: set[str] = set()
+
+    @staticmethod
+    def standing(state: dict) -> set[str]:
+        players = state.get("players")
+        if not isinstance(players, dict):
+            return set()
+        return {pid for pid, p in players.items() if isinstance(p, dict) and p.get("status") in STANDING}
+
+    def update(self, delta: Any, error: str | None, standing_before: set[str], state: dict) -> None:
+        if error or (delta is not None and not isinstance(delta, dict)):
+            self.confirmed.clear()
+            return
+        written = set()
+        players_delta = delta.get("players") if isinstance(delta, dict) else None
+        if isinstance(players_delta, list):
+            self.confirmed.clear()
+        elif isinstance(players_delta, dict):
+            for pid, pd in players_delta.items():
+                if pid == "_t":
+                    continue
+                angles = pd.get("angles") if isinstance(pd, dict) else None
+                yaw = angles.get("y") if isinstance(angles, dict) else None
+                if isinstance(yaw, list) and len(yaw) == 2:
+                    written.add(pid)
+                elif not isinstance(pd, dict) or (angles is not None and not isinstance(angles, dict)) or yaw is not None:
+                    self.confirmed.discard(pid)
+        players = state.get("players") if isinstance(state.get("players"), dict) else {}
+        respawned = self.standing(state) - standing_before - written
+        self.confirmed = ((self.confirmed | written) & set(players)) - respawned
+
+
+def _facing(state: dict, observed: dict, t: int, confirmed: set[str]) -> dict:
+    """Held facing per player hash: ``angles.y``, for players in ``confirmed``.
+
+    Verified on three replays (docs/map-rendering.md): degrees in [-180, 180],
+    0 along replay +x, increasing counter-clockwise. ``angles.x`` and ``angles.z``
+    are almost always 0 and are not used. ``age_s`` is the time since the last
+    write; an unchanged yaw is not rewritten, so age alone does not make it stale
+    (see ``FacingTrack``).
+    """
+    players = state.get("players")
+    if not isinstance(players, dict):
+        return {}
+    player_obs = observed.get("players") if isinstance(observed, dict) else None
+    player_obs = player_obs if isinstance(player_obs, dict) else {}
+    out = {}
+    for player_id, player in players.items():
+        if not isinstance(player, dict) or player_id not in confirmed:
+            continue
+        obs = player_obs.get(player_id)
+        leaf = _leaf(player, obs if isinstance(obs, dict) else {}, t, "angles", "y")
+        yaw = _number(leaf["value"])
+        if yaw is None or not -180 <= yaw <= 180:
+            continue
+        out[player.get("nucleusHash", player_id)] = {"yaw": round(yaw, 1), "age_s": leaf["gap"]}
+    return out
+
+
+def _player(row: dict) -> dict:
+    pos = row["pos"]
+    value = pos.get("value") or {}
+    gap = pos.get("gap") or {}
+    gaps = [g for g in (gap.get("x"), gap.get("y")) if isinstance(g, (int, float))]
+    return {
+        "name": row["name"]["value"],
+        "team": row["teamId"]["value"],
+        "status": row["status"]["value"],
+        "x": _number(value.get("x")),
+        "y": _number(value.get("y")),
+        "z": _number(value.get("z")),
+        "pos_age_s": max(gaps) if len(gaps) == 2 else None,
+        "z_age_s": gap.get("z") if isinstance(gap.get("z"), (int, float)) else None,
+    }
+
+
+def _usable(player: dict) -> bool:
+    return (
+        player["status"] in STANDING
+        and player["x"] is not None and player["y"] is not None
+        and player["pos_age_s"] is not None and player["pos_age_s"] <= FRESH_GAP_S
+    )
+
+
+def _centroid(players: list[dict], key: str = "xy") -> tuple | None:
+    if not players:
+        return None
+    if key == "z":
+        zs = [p["z"] for p in players if p["z"] is not None and p["z_age_s"] is not None and p["z_age_s"] <= FRESH_GAP_S]
+        return sum(zs) / len(zs) if zs else None
+    return (sum(p["x"] for p in players) / len(players), sum(p["y"] for p in players) / len(players))
+
+
+def _damage(entry_t: int, event: dict) -> dict | None:
+    if not isinstance(event, dict) or event.get("type") != "damage":
+        return None
+    victim = event.get("victim") if isinstance(event.get("victim"), dict) else {}
+    attacker = event.get("player") if isinstance(event.get("player"), dict) else {}
+    vpos = victim.get("pos") or {}
+    apos = attacker.get("pos") or {}
+    world = not attacker.get("teamId")
+    return {
+        "source": ("ring" if event.get("weapon") in RING_WEAPONS else "environment") if world else "player",
+        "t": entry_t,
+        "victim_team": victim.get("teamId"),
+        "victim": victim.get("name"),
+        "victim_xy": (_number(vpos.get("x")), _number(vpos.get("y"))),
+        "attacker_team": attacker.get("teamId"),
+        "attacker_team_name": attacker.get("teamName"),
+        "attacker_xy": (_number(apos.get("x")), _number(apos.get("y"))),
+        "amount": _number(event.get("damage")),
+        "weapon": event.get("weapon"),
+    }
+
+
+class TacticalIndex:
+    """Per-match causal states and damage events, built once and cached."""
+
+    def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
+        self._games: OrderedDict = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _build(self, game_id: int) -> dict | None:
+        record = _record(self.data_dir, game_id)
+        path = _raw_path(record, self.data_dir) if record else None
+        if path is None:
+            return None
+        series = json.loads(path.read_text(encoding="utf-8-sig")).get("series") or []
+        state, observed = initial_state(), {}
+        seconds: dict[int, dict] = {}
+        damage: list[dict] = []
+        ring_spans: dict[int, dict] = {}
+        start = None
+        facing = FacingTrack()
+        for frame in frame_entries(series):
+            t = frame["t"]
+            events = frame.get("f") or []
+            events = events if isinstance(events, list) else []
+            standing_before = FacingTrack.standing(state)
+            state, observed, error = apply_frame(state, frame.get("d"), events, observed, t)
+            facing.update(frame.get("d"), error, standing_before, state)
+            for event in events:
+                hit = _damage(t, event)
+                if hit is not None:
+                    damage.append(hit)
+            if start is None:
+                if state.get("state") != "Playing":
+                    continue
+                start = t
+            entries = live_entries(state, observed)
+            for entry in entries:
+                stage = entry.get("stage")
+                if isinstance(stage, int) and not isinstance(stage, bool) and stage not in ring_spans:
+                    ring_spans[stage] = ring_span(entry)
+            ring = ring_at(entries, t)
+            map_ring, target, waiting_convention = overlay_geometry(entries, t)
+            seconds[t] = {
+                "players": [_player(row) for row in export_players(state, observed, t)],
+                "ring": ring,
+                # Map only; the coach and tactical measurements read "ring".
+                "ring_target": target,
+                "map_following_target": following_destination(entries, target),
+                "map_ring": map_ring,
+                "map_ring_waiting_convention": waiting_convention,
+                "phase": state.get("state"),
+                "facing": _facing(state, observed, t, facing.confirmed),
+            }
+        # Feed events on the frame's replay clock, for the coach's recent-events window.
+        # display_feed is the map timeline only. It is not read by the coach or the model.
+        return {
+            "playing_start": start,
+            "seconds": seconds,
+            "damage": damage,
+            "events": recorded_events(series),
+            "ring_spans": ring_spans,
+            "display_feed": display_feed(series),
+        }
+
+    def game(self, game_id: int) -> dict | None:
+        with self._lock:
+            if game_id in self._games:
+                self._games.move_to_end(game_id)
+                return self._games[game_id]
+        built = self._build(game_id)
+        with self._lock:
+            self._games[game_id] = built
+            while len(self._games) > CACHE_GAMES:
+                self._games.popitem(last=False)
+        return built
+
+    def ring_overlay_at(self, game_id: int, t: int) -> dict:
+        """The map's ring at second ``t``: the same causal reader and label as the
+        tactical panel and the coach, plus the closing target when one is revealed."""
+        game = self.game(game_id)
+        if game is None:
+            return {"state": "unavailable", "t": t, "location": None, "target": None, **ring_label("unavailable", None, LAST_CLOSED)}
+        second = game["seconds"].get(t)
+        if second is None:
+            # Before play starts no ring entry is live; after the last second nothing is recorded.
+            phase = "not_revealed" if game["playing_start"] is None or t < game["playing_start"] else "unavailable"
+            return {"state": phase, "t": t, "location": None, "target": None, **ring_label(phase, None, LAST_CLOSED)}
+        ring = second.get("map_ring", second["ring"])
+        known = ring.get("known")
+        return {
+            "state": ring.get("phase"),
+            "t": t,
+            "location": {"x": ring["center"][0], "y": ring["center"][1], "r": ring["radius"]} if known else None,
+            "target": second.get("ring_target"),
+            "following_target": second.get("map_following_target"),
+            "observer_preview": False,
+            "countdown_s": ring.get("closing_remaining_s"),
+            **ring_label(ring.get("phase"), ring.get("stage"), second.get("map_ring_waiting_convention", LAST_CLOSED)),
+        }
+
+    def event_timeline(self, game_id: int, team: Any) -> dict:
+        """Map timeline for one squad. Display only: not a model or coach input."""
+        game = self.game(game_id)
+        if game is None:
+            return {"available": False, "reason": "no local replay for this match", "display_only": True}
+        start = game.get("playing_start")
+        seconds = game.get("seconds") or {}
+        last = max(seconds) if seconds else None
+
+        def elapsed(t: int | None) -> int | None:
+            if start is None or t is None:
+                return None
+            return int(t) - int(start)
+
+        rings = []
+        for stage in sorted(game.get("ring_spans") or {}):
+            span = game["ring_spans"][stage]
+            recorded = bool(span.get("end_recorded")) and span.get("end_t") is not None
+            rings.append({
+                "stage": stage,
+                "ring_number": stage + 1,
+                "start_t": span.get("start_t"),
+                "end_t": span.get("end_t") if recorded else None,
+                "start_elapsed": elapsed(span.get("start_t")),
+                "end_elapsed": elapsed(span.get("end_t")) if recorded else None,
+                "end_recorded": recorded,
+            })
+        return {
+            "available": True,
+            "display_only": True,
+            "game_id": game_id,
+            "team": str(team),
+            "playing_start": start,
+            "duration_s": elapsed(last),
+            "rings": rings,
+            "markers": markers_for_team(game.get("display_feed") or [], team, elapsed),
+        }
+
+    def facing_at(self, game_id: int, t: int) -> dict:
+        """Held facing at exactly second ``t``, as decoded causally up to ``t``."""
+        game = self.game(game_id)
+        second = game["seconds"].get(t) if game else None
+        return {"players": (second or {}).get("facing") or {}}
+
+    def at(self, game_id: int, t: int, team: Any) -> dict:
+        game = self.game(game_id)
+        if game is None or not game["seconds"]:
+            return {"available": False, "reason": "no local replay for this match"}
+        times = sorted(game["seconds"])
+        t = max(times[0], min(t, times[-1]))
+        return measure(game, t, team)
+
+
+def measure(game: dict, t: int, team: Any) -> dict:
+    second = game["seconds"][t]
+    players = second["players"]
+    team_key = str(team)
+    mine = [p for p in players if str(p["team"]) == team_key]
+    standing = [p for p in mine if p["status"] in STANDING]
+    usable = [p for p in mine if _usable(p)]
+    by_team: dict[str, list[dict]] = {}
+    for p in players:
+        if str(p["team"]) != team_key and _usable(p):
+            by_team.setdefault(str(p["team"]), []).append(p)
+
+    # Data quality: standing positions vs stale eliminated positions, kept apart.
+    members = [
+        {
+            "name": p["name"],
+            "status": p["status"],
+            "position_used": _usable(p),
+            "pos_age_s": p["pos_age_s"],
+            "z_age_s": p["z_age_s"],
+            "note": (
+                "last known position of an eliminated or dead player; not used" if p["status"] not in STANDING
+                else "position stale; not used" if not _usable(p) else ""
+            ),
+        }
+        for p in mine
+    ]
+    quality = {
+        "fresh_gap_s": FRESH_GAP_S,
+        "members": members,
+        "standing": len(standing),
+        "standing_with_fresh_position": len(usable),
+        "opposing_standing_with_fresh_position": sum(len(v) for v in by_team.values()),
+        "opposing_standing_stale_excluded": sum(
+            1 for p in players if str(p["team"]) != team_key and p["status"] in STANDING and not _usable(p)
+        ),
+    }
+
+    center = _centroid(usable)
+    my_z = _centroid(usable, "z")
+    opponents = []
+    if center is not None:
+        for other, group in by_team.items():
+            oc = _centroid(group)
+            dx, dy = oc[0] - center[0], oc[1] - center[1]
+            distance = math.hypot(dx, dy)
+            deg, sector = bearing(dx, dy) if distance >= MIN_BEARING_UNITS else (None, None)
+            oz = _centroid(group, "z")
+            opponents.append({
+                "team": other,
+                "players_used": len(group),
+                "distance": round(distance),
+                "band": "near" if distance <= NEAR_UNITS else "medium" if distance <= MEDIUM_UNITS else "far",
+                "bearing_deg": deg,
+                "sector": sector,
+                "dz": round(my_z - oz) if my_z is not None and oz is not None else None,
+            })
+        opponents.sort(key=lambda o: o["distance"])
+
+    nearby = [o for o in opponents if o["band"] != "far"]
+    elevation = {
+        "available": center is not None and my_z is not None,
+        "squad_z": round(my_z) if my_z is not None else None,
+        "comparison_distance_units": MEDIUM_UNITS,
+        "opponents_compared": sum(1 for o in nearby if o["dz"] is not None),
+        "higher_than": sum(1 for o in nearby if o["dz"] is not None and o["dz"] > 0),
+        "lower_than": sum(1 for o in nearby if o["dz"] is not None and o["dz"] < 0),
+        "mean_dz": round(sum(o["dz"] for o in nearby if o["dz"] is not None) / max(1, sum(1 for o in nearby if o["dz"] is not None)))
+        if any(o["dz"] is not None for o in nearby) else None,
+        "note": "Positive dz: this squad's mean z is higher. Height only; not high-ground control or line of sight.",
+    }
+
+    sectors = {s: 0 for s in SECTORS}
+    for o in nearby:
+        if o["sector"] is not None:
+            sectors[o["sector"]] += 1
+    pressure = {
+        "near_units": NEAR_UNITS,
+        "medium_units": MEDIUM_UNITS,
+        "near_squads": sum(1 for o in opponents if o["band"] == "near"),
+        "medium_squads": sum(1 for o in opponents if o["band"] == "medium"),
+        "sectors": sectors,
+        "occupied_sectors": sum(1 for v in sectors.values() if v),
+        "too_close_for_bearing": sum(1 for o in nearby if o["sector"] is None),
+        "min_bearing_units": MIN_BEARING_UNITS,
+        "opponents": opponents[:8],
+        "note": "Opposing squads with fresh standing positions, by centroid distance. Not line of sight.",
+    }
+
+    window = [d for d in game["damage"] if t - FIRE_WINDOW_S < d["t"] <= t and str(d["victim_team"]) == team_key]
+    attackers: dict[str, dict] = {}
+    by_source = {"ring": 0.0, "environment": 0.0, "self": 0.0}
+    for hit in window:
+        amount = hit["amount"] or 0.0
+        if hit["source"] != "player":
+            by_source[hit["source"]] += amount
+            continue
+        if str(hit["attacker_team"]) == team_key:
+            by_source["self"] += amount
+            continue
+        row = attackers.setdefault(str(hit["attacker_team"]), {
+            "team": str(hit["attacker_team"]), "team_name": hit["attacker_team_name"], "damage": 0.0, "hits": 0,
+            "last_hit_t": None, "bearings": [],
+        })
+        row["damage"] += amount
+        row["hits"] += 1
+        row["last_hit_t"] = hit["t"]
+        (vx, vy), (ax, ay) = hit["victim_xy"], hit["attacker_xy"]
+        if None not in (vx, vy, ax, ay):
+            row["bearings"].append(bearing(ax - vx, ay - vy))
+    for row in attackers.values():
+        degrees = [b[0] for b in row.pop("bearings")]
+        if degrees:
+            sx = sum(math.sin(math.radians(d)) for d in degrees)
+            cy = sum(math.cos(math.radians(d)) for d in degrees)
+            row["bearing_deg"], row["sector"] = bearing(sx, cy)
+        else:
+            row["bearing_deg"], row["sector"] = None, None
+        row["damage"] = round(row["damage"])
+        row["seconds_ago"] = t - row["last_hit_t"]
+    fire = {
+        "window_s": FIRE_WINDOW_S,
+        "damage_events": len(window),
+        "damage_taken": round(sum((h["amount"] or 0.0) for h in window)),
+        "from_opponents": round(sum(r["damage"] for r in attackers.values())),
+        "from_ring": round(by_source["ring"]),
+        "from_other_environment": round(by_source["environment"]),
+        "from_own_squad": round(by_source["self"]),
+        "attacking_squads": len(attackers),
+        "attackers": sorted(attackers.values(), key=lambda r: -r["damage"]),
+        "note": "Observed damage events in the window, with attacker direction at the time of each hit. Not current visibility.",
+    }
+
+    ring = second["ring"]
+    # One user-facing ring label (ring N = N-th closure); the raw 0-based index is kept beside it.
+    ring_out = {"known": bool(ring.get("known")), "phase": ring.get("phase"),
+                **ring_label(ring.get("phase"), ring.get("stage"), LAST_CLOSED),
+                "closing_remaining_s": ring.get("closing_remaining_s"), "reason": ring.get("reason")}
+    if ring.get("known") and usable:
+        cx, cy = ring["center"]
+        r = ring["radius"]
+        signed = [math.hypot(p["x"] - cx, p["y"] - cy) - r for p in usable]
+        ring_out.update({
+            "radius": round(r),
+            "boundary_distance": [round(d) for d in signed],
+            "nearest_inside_margin": round(-max(signed)) if max(signed) <= 0 else None,
+            "outside_players": sum(1 for d in signed if d > 0),
+            "players_measured": len(signed),
+            "note": "Signed distance to the boundary per member; positive is outside.",
+        })
+
+    return {
+        "available": True,
+        "contract_version": CONTRACT_VERSION,
+        "t": t,
+        "elapsed": t - game["playing_start"] if game["playing_start"] is not None else None,
+        "team": team_key,
+        "explanatory_only": True,
+        "limits": LIMITS,
+        "quality": quality,
+        "elevation": elevation,
+        "fire": fire,
+        "pressure": pressure,
+        "ring": ring_out,
+    }

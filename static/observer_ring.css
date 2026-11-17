@@ -1,0 +1,4 @@
+.observer-ring-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin: 0.25rem 0 0.5rem; font-size: 0.78rem; color: #b7beca; }
+.observer-ring-controls label { display: inline-flex; flex-direction: row; align-items: center; gap: 0.35rem; cursor: pointer; }
+.observer-ring-badge { background: #42351f; color: #f0c674; border: 1px solid #806b3e; border-radius: 4px; padding: 0.1rem 0.4rem; }
+.observer-ring-controls [hidden] { display: none !important; }

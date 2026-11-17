@@ -1,0 +1,129 @@
+# Dashboard
+
+Flask view of one accepted match. It reads the collector's data directory and does not train a model or change the decoder.
+
+## Data contract
+
+Needed to show a match:
+
+| Artifact | Used for |
+| --- | --- |
+| `DATA/collection/manifest.json` | Event, map, unrounded `quality_score`, verified winner label |
+| `DATA/raw/<livedata>.timeseries.json` | Positions, health, shields, status. Path is the record's `download_path`, then `DATA/raw/` |
+| Decoder `apply_frame` / `export_players` | One replay, cached under `DATA/dashboard/<game_id>.json` |
+
+Prediction panels. Each says **Not available** when its artifact is missing or invalid; nothing is fabricated.
+
+| Panel | Artifact | Meaning |
+| --- | --- | --- |
+| **Held-out win probability** (primary) | `DATA/exports/heldout-session-split-v2/` | Per-checkpoint predictions for the 6 test games of the frozen session split. The model was fit on other sessions. |
+| **Final model: fitted on these games** | `DATA/models/model.json` | A forward pass of the model fit on all 51 games. In-sample; not evidence. |
+| **Held-out evaluation: all test games** | `DATA/models/report.json` | Aggregate test metrics. Contention uniform is listed as the primary baseline. |
+
+**Held-out bundle validation.** The bundle is used only if all of these hold:
+- `schema_version` is 1;
+- `prediction_type` is `held_out_session_split_test`;
+- `held_out` is true and `final_model_predictions_included` is false;
+- every file listed in `bundle.json` matches its sha256.
+
+Predictions are joined on `(game_id, t)` and `teamId`. Each bundle checkpoint must be one of the dashboard's own checkpoints, with the same `elapsed` and the same set of squads. Any mismatch makes the panel Not available. For the 45 train and validation games, the panel says held-out predictions are unavailable and names the split.
+
+**Slider.** The slider value is seconds since Playing start. A seek requests replay second `t = playing_start + value` from `/api/matches/<id>/at/<t>`, which returns the frame at `t`, or the latest one before it. Array indexes are never used as times. Bounds are set once per match, from its first to its last stored replay second. Frames run past Playing to the end of the telemetry. From the first `WinnerDetermined` second (`conclusion_t`), frames are `finished`. The page then shows "Match finished" and the verified winner as a recorded result, not a prediction. A replay with no `WinnerDetermined` says "Replay ends before match conclusion" at its last frame. Each seek or match selection takes a new token, and the page fetches the frame and ring together. A response for an older token is dropped. A failed ring request leaves the frame shown with "Ring: not available".
+
+These post-outcome frames are for viewing only. Checkpoints stop at the first second that is not Playing, as before. Training uses `features.py`, which has its own cut-off and does not read this timeline.
+
+**Ring.** In most replays, the match ends while the final stage is still closing, so that stage has no `end` or `endCenter`. From its start, the ring line says it is closing with no recorded end, and no circle is drawn. Before this was handled, every later second returned HTTP 500, so the far end of the slider could not be shown.
+
+**Per-second predictions.** `live_predictions.py` makes a prediction at every replay second from Playing start up to the feature cut-off. The cut-off is the first second that is not Playing, or that reports `teamsAlive <= 1`. Each prediction is made the way the evaluation made its 30-second ones:
+- training feature code, `features.replay_checkpoints(step=1)` and `squad_rows`, run on the local replay;
+- the frozen model's own weights and scaler: the bundle's `evaluation_model.json` for the 6 test games (sha256 checked against `bundle.json`), and `models/model.json` for the in-sample final-model panel;
+- `train_model.predict` / `masked` / `contention_baseline`.
+
+Eligibility uses `features.contention` without the winner, so only elimination events and `teamsAlive` up to that second count. At all 238 held-out and 2,045 final-model 30-second checkpoints, the per-second values equal the frozen ones exactly. Leaving out the winner check changes no checkpoint's eligibility. Nothing is refit, retuned, or interpolated.
+
+`/api/matches/<id>/at/<t>` returns the frame, its ring, and the predictions made at that same second. The panel shows them with that timestamp. After the cut-off no prediction is made. From `WinnerDetermined` on, the panel shows the recorded outcome (verified winner 100%, others 0%), labeled as a result, not a prediction. The frozen 30-second checkpoints stay available as a separately labeled history. The evaluation report is still scored only at those 30-second checkpoints, and says so.
+
+**Largest changes in model estimate.** `GET /api/matches/<id>/highlights?kind=held_out|final_model_fitted&team=<teamId>` lists the largest moves in that squad's per-second estimate. The two kinds are separate requests, separate cache entries, and separate panels. The cache key is the game, the kind, the squad, and the frozen model's sha256. The handler reuses the `LivePredictions` tables already built for the replay; it does not fit a model or change the 5-point / 5–10–20-second windows. See `docs/turning-points.md`.
+
+Each row shows the representative window and the full merged episode as separate spans, then that window's before and after probabilities, the percentage-point change, the model file and sha256, and coincident events inside the representative window. Events that fall only in the rest of the episode are not listed on that row. Clicking a row sets the slider to the window's start and uses the same seek as dragging it.
+
+A failed request says the highlights could not be loaded. A missing model, a game outside the held-out split, or a squad that is not in the match says **Not available** and gives the reason, with empty lists. A model that ran and found no move of at least 5 percentage points says so. The recorded 100% at `WinnerDetermined` is not a highlight.
+
+**Known feature limitation (frozen model, not changed).** `hp_frac` sums health and shields over alive and downed players. The replay reports a downed player's health as the bleed-out pool, often 100/100, so a squad with a downed player looks healthier than its fighting strength. Example: game 123633 at 18:51, EQT (one alive, one downed). Correcting this needs a new feature and a refit, so it is left as is. The page notes it under the model inputs.
+
+**Seek performance and caching.** Each seek is one request. At most one frame request runs at a time; slider input while it runs only replaces the pending value. Match changes abort the request in flight. The selected time shows at once, and a separate label names the frame actually displayed. With `--backend tiger`, selecting a match loads that match's `player_frames` from Tiger Data in one indexed query, in the background on its own connection. The last three selected matches are kept in memory, and seeks are served from that copy. Until it loads, each seek is one Tiger query (about 80 ms here, mostly network round trip). Every frame response says which path served it (`read.via`). Per-second prediction tables are also held in memory per match.
+
+**Time.** The frozen evaluation's checkpoints exist every 30 s from Playing start until the replay reports `teamsAlive <= 1`. For each slider second, the server returns the most recent checkpoint at or before it (`frames/<i>` → `checkpoints.heldout` / `checkpoints.final`, with `age_s`). The page shows that checkpoint's own time (MM:SS, replay `t`, UTC on the replay clock), plus how far the slider is past it. It never selects a later checkpoint and never interpolates. The per-squad history lists only checkpoints up to the current one.
+
+**Baseline.** Both prediction panels use contention uniform: 1 / squads without a verified elimination event, and 0 for eliminated squads. Eliminations come from feed `eliminated` events up to `t`, checked against `teamsAlive`. Where that check fails, the panel falls back to lobby uniform and says so.
+
+The demo opens on the first held-out test game.
+
+The plot is XY only; `z` is omitted. On a map version with a cached 2048 image, positions use the Overstat `mapCord` transform on that image and the current ring is drawn with the outside shaded (see `docs/map-rendering.md`). Any other map shows "Map background unavailable" and nothing is drawn on another map's image. The ring line names the slider time it is drawn at; prediction panels name their own, older checkpoint time.
+
+## Page layout
+
+The match page puts the map on the left and four cards on the right. Canvas size, zoom, and pan are unchanged. A fresh recorded yaw is an arrow; otherwise the mark is a dot. The arrow is not a verified line of sight, and no viewing cone is drawn (see [map-rendering.md](map-rendering.md)).
+
+The header shows the match and squad selectors, the time slider, and a compact Overstat URL field. Under them: the event name, a readable map name from the verified Overstat short-name table (`static/map_names.json`, the same table as `map_config.SHORT_NAMES`; otherwise “Unknown map”), one **Saved** or **Temporary preview** badge, and one prediction label: **Held-out**, **New match**, or **Fitted**. “?” buttons explain the collection threshold, a preview, and the estimate’s training membership. Import progress and errors stay on the page. Raw game, session, map, and team ids, training counts, and the database connection are in **Model details**.
+
+| Card | Shows | On demand |
+| --- | --- | --- |
+| **Selected squad** | One row per player: status, HP and shields as `value/max`. Eliminated players keep the 0-with-maximum display | — |
+| **Win estimate** | One primary estimate, tagged *Experimental estimate*. A fitted estimate also shows *in-sample* beside the number. Rank among squads still in contention, the contention baseline, and a clickable comparison table | Provenance, file hashes, and training counts are in Model details. Eliminated squads fold into one row |
+| **Key moments** | Two carousels, *Win estimate rose* and *Win estimate fell*, each with up to 3 detected highlights from the primary model. Each card shows the representative window and one sentence for the most relevant recorded knock, revive, respawn or elimination in that window. With no such event it reads "Win estimate changed; no matching event was identified." | *Details*: the window's exact change, the full episode span, the model file, and the recorded events in the window |
+| **AI Coach** | **Analyze this situation**. The first line is the short recommended action from the current prompt, kept conditional and in plain language. Team names keep their map colors. Nothing is sent until Analyze or Review decision is clicked | Details, alternatives, the evidence packet, and tactical measurements |
+
+Arrows change the displayed card only. They never seek, move the camera or call the AI. Clicking a card's time seeks with the same path as the slider. **Review decision** appears on *Win estimate fell* cards. Drawers that are re-rendered every second (`data-keep`) stay open while seeking.
+
+**Model details** is a dialog that opens over the page without changing the scroll position, slider, squad or camera. It holds:
+
+- the backend connection detail, game and session ids, the raw map id, squad names with team ids, quality, the verified winner and replay timestamps;
+- the primary model's provenance (training counts, per-game log loss, file, full sha256), the full table with baseline column, the model inputs and the 30-second checkpoint history;
+- the alternate estimate and its key-moment list (with **Review decision**);
+- the full held-out evaluation table.
+
+**Formats** (`static/ui.js`):
+
+- times are MM:SS, with minutes allowed past 99;
+- probabilities are percentages with one decimal;
+- differences are in percentage points (`pp`);
+- Top-1 is a percentage;
+- quality has two decimals;
+- distances and heights are rounded and labelled "game units", because their scale is not verified;
+- missing values read "Unknown";
+- ring names use the shared ring label (see [tactical.md](tactical.md)).
+
+## Data backends
+
+`--backend tiger` (or `auto` with imported matches) reads matches, squads, player frames, both prediction kinds, and the evaluation report from Tiger Data (`docs/tiger-data.md`). Not every component is database-backed:
+
+| Component | Source under every backend |
+| --- | --- |
+| Map config and image | `map_config.py` and `static/maps/*.webp` |
+| Current ring (`/api/matches/<id>/ring`) | The local replay payload at the manifest's `download_path`, read by `map_config.load_rings` (`DATA/collection/manifest.json` is required) |
+
+So the Tiger-backed dashboard still needs the local original `data/` directory for the ring, and `--expansion-dir` for an expansion game's replay.
+
+Quality on the selector is the manifest's unrounded per-game score. It is not a model feature. The match dropdown lists numeric quality from highest to lowest, with missing scores last and the higher game id first when scores tie.
+
+`--expansion-dir` registers another accepted-game directory. Those games stay out of the frozen split and out of the held-out evaluation. They get a new-match forward pass of the unchanged `models/model.json` and its saved scaler. The visible badge is **New match.** The help text and Model details say it is a forward pass of that model, not a held-out evaluation and not fitted on this game, when the game id and replay hash are both absent from the training inventory. On this database the menu is 100 matches: 51 `original` and 49 `accepted-expansion-49` (read from `/api/matches` on 2026-11-14). That catalog is not the six-game test set. Their maps, rings, and coaching still read that directory's replay files. The original manifest, model file, frozen split, and evaluation report are not modified.
+
+Opening an Overstat URL is documented in [open-match.md](open-match.md). A saved import is a separate `user-import` collection and uses the same **New match** badge. A temporary preview stays out of Tiger Data and expires after 24 hours. The demo link for the held-out script is `http://127.0.0.1:5050/?game=123633&team=20` (squad 20 is EQT). Opening the site with no query selects the first held-out game in quality order, which is not 123633. An optional `t` query is match-relative slider seconds, not the replay timestamp. `?game=123633&team=20&t=1127` opens EQT at 18:47. **Start demo** synchronizes that moment and explicitly requests a situation review, using the cache when available. A direct link only opens the replay and never requests a review.
+
+## Launch
+
+From the repository root. `data/` is the original directory. The expansion directory is separate and gitignored with it. `DATABASE_URL` comes from `.env` and is never printed. `requirements.txt` installs Flask, psycopg, and the coach SDKs.
+
+```sh
+set -a; . ./.env; set +a
+.venv/bin/python app.py --data-dir data --port 5050 --backend tiger --expansion-dir /Users/ansonlin/Apex-WinLab-expansion/data
+```
+
+Open `http://127.0.0.1:5050`. Port 5000 is taken by macOS AirPlay Receiver on this Mac. `--backend files` reads only the directories you pass; it does not use Tiger.
+
+## Tests
+
+```sh
+.venv/bin/python -m unittest discover -s tests -q
+```

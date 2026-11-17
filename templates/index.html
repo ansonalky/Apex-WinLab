@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apex WinLab</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/timeline.css">
+  <link rel="stylesheet" href="/static/observer_ring.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Apex WinLab</h1>
+    <nav class="nav">
+      <a href="/" aria-current="page">Match Explorer</a>
+      <a href="/stats">Performance</a>
+    </nav>
+    <button id="start-here" type="button" class="action quiet" title="Reviews the selected squad’s largest win-estimate drop.">Review a key moment</button>
+    <p id="start-hint" class="when start-hint" hidden>Reviews the selected squad’s largest downward key-moment episode.</p>
+    <p id="start-status" class="when start-status" role="status" hidden></p>
+    <button id="key-moment-manual" type="button" class="action quiet small" hidden>Analyze current situation</button>
+    <div id="ai-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <button id="details-open" type="button" class="action quiet">Model details</button>
+  </header>
+  <section class="controls">
+    <div class="field">
+      <span class="label-line">
+        <label for="match">Match</label>
+        <span class="help">
+          <button type="button" class="help-btn" aria-expanded="false" aria-describedby="tip-quality" aria-label="About match quality">?</button>
+          <span id="tip-quality" class="help-bubble" role="tooltip" hidden>Quality is the stored collection score. 7.0 is the save threshold: an imported replay is saved only at 7.0 or above when every acceptance check passes. Below 7.0, unknown quality, or a failed check stays a temporary preview. Higher scores are listed first, and missing scores last.</span>
+        </span>
+      </span>
+      <select id="match"></select>
+    </div>
+    <div class="field">
+      <label for="squad">Squad</label>
+      <select id="squad"></select>
+    </div>
+    <label class="slider"><span>Match time <span aria-hidden="true">⏳</span></span>
+      <input id="time" type="range" min="0" max="0" value="0" step="1">
+      <span><span id="clock">00:00</span><span id="shown" class="when" aria-live="polite"></span></span>
+    </label>
+    <form id="open-match" class="open-match">
+      <label for="overstat-url">Overstat URL
+        <input id="overstat-url" type="url" inputmode="url" placeholder="https://overstat.gg/…" autocomplete="off" spellcheck="false">
+      </label>
+      <button type="submit" class="action">Open</button>
+    </form>
+    <p id="open-status" class="when open-feedback" hidden></p>
+    <div id="open-choices" class="open-feedback" hidden></div>
+  </section>
+  <p id="outcome" class="outcome" hidden></p>
+  <div id="match-meta" class="identity"></div>
+  <p id="coord-note" class="note" hidden></p>
+  <div class="layout">
+    <div>
+    <div class="observer-ring-controls">
+      <label title="Shows recorded future rings; players may not have known them."><input type="checkbox" id="observer-ring" aria-describedby="observer-ring-explanation"> Observer ring preview</label>
+      <span id="observer-ring-badge" class="observer-ring-badge" title="Shows recorded future rings; players may not have known them." hidden>Observer preview</span>
+      <span id="observer-ring-explanation" class="sr-only">Shows recorded future rings; players may not have known them.</span>
+      <span id="observer-ring-status" role="status"></span>
+    </div>
+    <div class="map-viewport"><canvas id="plot" width="720" height="720" aria-label="Map and player positions"></canvas></div>
+    <div id="event-timeline" class="event-timeline" hidden></div>
+  </div>
+    <div class="side">
+      <section class="card">
+        <h2>Selected squad <span id="squad-tag"></span></h2>
+        <div id="roster"></div>
+      </section>
+      <section class="card">
+        <h2>Win estimate <span class="tag exp">Experimental estimate</span></h2>
+        <div id="estimate"><p class="when">Loading…</p></div>
+      </section>
+      <section class="card">
+        <h2>Key moments</h2>
+        <div class="moments">
+          <div id="moment-up" class="carousel"><p class="when">Loading…</p></div>
+          <div id="moment-down" class="carousel"><p class="when">Loading…</p></div>
+        </div>
+      </section>
+      <section class="card">
+        <h2 class="with-action">AI Coach <span class="tag ai">AI-generated</span> <button id="coach-run" type="button" class="action">Analyze this situation</button></h2>
+        <div class="review-modes" role="tablist" aria-label="Review mode">
+          <button type="button" role="tab" data-review-mode="situation" aria-controls="coach">Current situation</button>
+          <button type="button" role="tab" data-review-mode="decision" aria-controls="coach">Key decision</button>
+        </div>
+        <p id="review-context" class="review-for">Current situation</p>
+        <p id="review-notice" class="when" role="status"></p>
+        <div id="coach" class="coach" aria-live="polite"><p class="when">Checking AI provider…</p></div>
+        <div class="coach-drawers">
+          <details class="sub" data-keep="tactical">
+            <summary>Tactical measurements <span class="when">(not used by the model)</span></summary>
+            <div id="tactical"></div>
+          </details>
+          <details id="situation-details" class="sub" data-keep="coach-review-details">
+            <summary>Review details</summary>
+            <div id="coach-details" class="coach"><p class="when">No review yet.</p></div>
+          </details>
+        </div>
+      </section>
+    </div>
+  </div>
+  <dialog id="model-details" aria-labelledby="model-details-title">
+    <header>
+      <h2 id="model-details-title">Model details</h2>
+      <button type="button" class="action quiet" data-close>Close</button>
+    </header>
+    <div class="dialog-body">
+      <section><h3>Data and match</h3><div id="backend-details"></div><div id="match-details"></div></section>
+      <section><h3>Primary estimate: provenance and inputs</h3><div id="provenance"></div></section>
+      <section><h3 id="alt-title">Alternate estimate</h3><div id="alt-estimate"></div></section>
+      <section><h3 id="alt-highlights-title">Alternate key moments</h3><div id="alt-highlights" class="highlights"></div></section>
+      <section><h3>Held-out evaluation · all test games</h3><div id="evaluation"></div></section>
+    </div>
+  </dialog>
+  <script src="/static/review_status.js"></script>
+  <script src="/static/map_view.js"></script>
+  <script src="/static/ui.js"></script>
+  <script src="/static/tactical.js"></script>
+  <script src="/static/review_panel.js"></script>
+  <script src="/static/coach.js"></script>
+  <script src="/static/decision.js"></script>
+  <script src="/static/timeline.js"></script>
+  <script src="/static/observer_ring.js"></script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
